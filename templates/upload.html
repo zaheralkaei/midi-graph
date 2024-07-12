@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Upload MIDI File</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: black;
+            color: white;
+        }
+        h1 {
+            text-align: center;
+            margin-top: 50px;
+        }
+        .container {
+            margin-top: 50px;
+            position: relative;
+        }
+        #graph {
+            width: 100%;
+            height: 600px;
+            border: 1px solid white;
+            margin-bottom: 10px;
+        }
+        #zoom-buttons {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #transition-box {
+            border: 1px solid white;
+            padding: 10px;
+            margin-bottom: 10px;
+            height: 150px;
+            overflow-y: scroll;
+        }
+        .btn {
+            margin-right: 5px;
+        }
+        #audio-controls {
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Upload MIDI File</h1>
+    <form method="post" enctype="multipart/form-data">
+        <div class="form-group">
+            <label for="file">Choose MIDI file</label>
+            <input type="file" class="form-control-file" id="file" name="file">
+        </div>
+        <button type="submit" class="btn btn-primary">Upload</button>
+    </form>
+    <div id="transition-box">
+        <h4>Transition Probabilities</h4>
+        <pre id="transition-probabilities"></pre>
+    </div>
+    <div id="graph"></div>
+    <div id="zoom-buttons">
+        <button class="btn btn-secondary" id="zoom-in">Zoom In</button>
+        <button class="btn btn-secondary" id="zoom-out">Zoom Out</button>
+    </div>
+    <div id="audio-controls">
+        <button class="btn btn-success" id="play-midi">Play MIDI</button>
+        <button class="btn btn-danger" id="stop-midi">Stop MIDI</button>
+        <audio id="midi-audio" src="{{ url_for('uploaded_file', filename=filename) }}" type="audio/midi"></audio>
+    </div>
+</div>
+<script src="https://d3js.org/d3.v6.min.js"></script>
+<script>
+    const filename = "{{ json_filename|default('') }}";
+    if (filename) {
+        const width = document.getElementById('graph').offsetWidth;
+        const height = document.getElementById('graph').offsetHeight;
+
+        const svg = d3.select("#graph").append("svg")
+                      .attr("width", width)
+                      .attr("height", height);
+
+        const g = svg.append("g");
+
+        const zoom = d3.zoom()
+          .scaleExtent([0.5, 10])
+          .on("zoom", (event) => {
+            g.attr("transform", event.transform);
+          });
+
+        svg.call(zoom);
+
+        // Zoom in and out buttons
+        d3.select("#zoom-in").on("click", () => {
+          svg.transition().call(zoom.scaleBy, 1.2);
+        });
+
+        d3.select("#zoom-out").on("click", () => {
+          svg.transition().call(zoom.scaleBy, 0.8);
+        });
+
+        const defs = svg.append('defs');
+
+        // Arrowhead marker definition
+        defs.append('marker')
+          .attr('id', 'arrowhead')
+          .attr('viewBox', '-0 -5 10 10')
+          .attr('refX', 13)
+          .attr('refY', 0)
+          .attr('orient', 'auto')
+          .attr('markerWidth', 10)
+          .attr('markerHeight', 10)
+          .attr('xoverflow', 'visible')
+          .append('svg:path')
+          .attr('d', 'M 0,-5 L 10 ,0 L 0,5')
+          .attr('fill', '#999')
+          .style('stroke', 'none');
+
+        const color = d3.scaleOrdinal(d3.schemeCategory10);
+
+        d3.json("/data/" + filename).then(graph => {
+            const simulation = d3.forceSimulation(graph.nodes)
+              .force("link", d3.forceLink(graph.links).id(d => d.id).distance(100))
+              .force("charge", d3.forceManyBody().strength(-300))
+              .force("center", d3.forceCenter(width / 2, height / 2));
+
+            const link = g.append("g")
+              .attr("class", "links")
+              .selectAll("path")
+              .data(graph.links)
+              .enter().append("path")
+              .attr('marker-end', 'url(#arrowhead)')
+              .attr("stroke-width", 2)
+              .attr("stroke", "#999")
+              .attr("stroke-opacity", 0.6)
+              .attr("fill", "none");
+
+            const linkLabel = g.append("g")
+              .attr("class", "link-labels")
+              .selectAll("text")
+              .data(graph.links)
+              .enter().append("text")
+              .attr("class", "label")
+              .attr("fill", "white")
+              .attr("text-anchor", "middle")
+              .text(d => d.value.toFixed(2));
+
+            const node = g.append("g")
+              .attr("class", "nodes")
+              .selectAll("circle")
+              .data(graph.nodes)
+              .enter().append("circle")
+              .attr("r", 20) // Increased node size
+              .attr("fill", d => color(d.id))
+              .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+            const label = g.append("g")
+              .attr("class", "labels")
+              .selectAll("text")
+              .data(graph.nodes)
+              .enter().append("text")
+              .attr("dy", 4)
+              .attr("dx", -12)
+              .attr("fill", "white")
+              .text(d => d.id);
+
+            simulation.on("tick", () => {
+                link.attr("d", d => {
+                    if (d.source === d.target) {
+                        // Increased arch for self-loops
+                        const x1 = d.source.x, y1 = d.source.y;
+                        const x2 = x1 + 1, y2 = y1 + 1;
+                        const dx = x2 - x1, dy = y2 - y1, dr = Math.sqrt(dx * dx + dy * dy);
+                        return `M${x1},${y1}A${dr},${dr} 0 0,1 ${x2},${y2}`;
+                    } else {
+                        const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                        const dr = Math.sqrt(dx * dx + dy * dy);
+                        return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+                    }
+                });
+
+                linkLabel.attr("x", d => (d.source.x + d.target.x) / 2)
+                          .attr("y", d => (d.source.y + d.target.y) / 2);
+
+                node.attr("cx", d => d.x)
+                    .attr("cy", d => d.y);
+
+                label.attr("x", d => d.x)
+                     .attr("y", d => d.y);
+            });
+
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+        }).catch(error => {
+            console.error('Error loading graph data:', error);
+        });
+      }
+
+      // MIDI Play/Stop functionality checks
+      const playButton = document.getElementById('play-midi');
+      const stopButton = document.getElementById('stop-midi');
+      const audioElement = document.getElementById('midi-audio');
+
+      playButton.addEventListener('click', () => {
+        if(audioElement) {
+          audioElement.play();
+        } else {
+          console.error('No audio file loaded');
+        }
+      });
+
+      stopButton.addEventListener('click', () => {
+        if(audioElement) {
+          audioElement.pause();
+          audioElement.currentTime = 0;
+        } else {
+          console.error('No audio file loaded');
+        }
+      });
+    </script>
+  </body>
+</html>
