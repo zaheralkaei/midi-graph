@@ -1,0 +1,14 @@
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer-when-downgrade"
+
+[[headers]]
+  for = "/examples/*.mid"
+  [headers.values]
+    Content-Type = "audio/midi"
+    Cache-Control = "public, max-age=3600"

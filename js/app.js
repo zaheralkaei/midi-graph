@@ -1,0 +1,182 @@
+// app.js — wires together file picker, MIDI/MusicXML parser, stats panel,
+// graph, sheet music, and playback. Single-page, no server.
+
+(function () {
+  const M = window.MidiGraph;
+
+  const fileInput = document.getElementById('file');
+  const loadDemoMidiBtn = document.getElementById('load-demo-midi');
+  const loadDemoXmlBtn = document.getElementById('load-demo-xml');
+  const filenameDisplay = document.getElementById('filename-display');
+  const statsPanel = document.getElementById('stats-panel');
+  const graphPanel = document.getElementById('graph-panel');
+  const sheetPanel = document.getElementById('sheet-panel');
+  const statsGrid = document.getElementById('stats-grid');
+  const topTransitionsEl = document.getElementById('top-transitions');
+  const sheetContainer = document.getElementById('sheet-container');
+  const playBtn = document.getElementById('play-btn');
+  const stopBtn = document.getElementById('stop-btn');
+  const playbackInfo = document.getElementById('playback-info');
+
+  let currentGraphController = null;
+  let currentPlayback = null;
+  let isPlaying = false;
+
+  function resetState() {
+    if (currentGraphController) {
+      currentGraphController.destroy();
+      currentGraphController = null;
+    }
+    M.clearSheet();
+    sheetPanel.classList.add('hidden');
+    statsPanel.classList.add('hidden');
+    graphPanel.classList.add('hidden');
+    playBtn.disabled = true;
+    stopBtn.disabled = true;
+    isPlaying = false;
+    if (currentPlayback) {
+      currentPlayback.stop();
+      currentPlayback = null;
+    }
+  }
+
+  function renderStats(stats) {
+    statsGrid.innerHTML = '';
+    const cells = [
+      { label: 'Total notes', value: stats.note_count, sub: `${stats.unique_note_count} unique pitches` },
+      { label: 'Transitions', value: stats.transition_count, sub: 'note → next-note pairs' },
+      { label: 'Self-loops', value: stats.self_loop_count, sub: `${(stats.self_loop_share * 100).toFixed(1)}% of all transitions` },
+      { label: 'Pitch range', value: stats.pitch_range, sub: '' },
+    ];
+    for (const c of cells) {
+      const el = document.createElement('div');
+      el.className = 'stat';
+      el.innerHTML = `
+        <div class="label">${c.label}</div>
+        <div class="value"${c.label === 'Pitch range' ? ' style="font-size: 15px;"' : ''}>${c.value}</div>
+        ${c.sub ? `<div class="sub">${c.sub}</div>` : ''}
+      `;
+      statsGrid.appendChild(el);
+    }
+    topTransitionsEl.innerHTML = stats.top_transitions
+      .map(t => `<code>${t.from} → ${t.to}</code><span class="pct">${(t.probability * 100).toFixed(1)}%</span>`)
+      .join(' &nbsp; ');
+    statsPanel.classList.remove('hidden');
+  }
+
+  // Load a MIDI file (Uint8Array of bytes).
+  function loadMidiBytes(bytes, label) {
+    resetState();
+    filenameDisplay.textContent = label;
+    let result;
+    try {
+      result = M.analyzeMidi(bytes);
+    } catch (e) {
+      playbackInfo.textContent = 'Error parsing MIDI: ' + e.message;
+      return;
+    }
+    finishLoad(result);
+  }
+
+  // Load a MusicXML file (text).
+  async function loadMusicXmlText(xmlText, label) {
+    resetState();
+    filenameDisplay.textContent = label;
+    let result;
+    try {
+      result = M.analyzeMusicXml(xmlText);
+    } catch (e) {
+      playbackInfo.textContent = 'Error parsing MusicXML: ' + e.message;
+      return;
+    }
+    finishLoad(result);
+    // Render sheet music. Sheet panel only shows for MusicXML files.
+    if (M.isSheetAvailable()) {
+      sheetPanel.classList.remove('hidden');
+      await M.renderSheet(sheetContainer, xmlText);
+    } else {
+      sheetPanel.classList.remove('hidden');
+      sheetContainer.innerHTML = '<p style="color: var(--muted);">Sheet music renderer (OSMD) failed to load from CDN. The transition graph still works.</p>';
+    }
+  }
+
+  function finishLoad(result) {
+    renderStats(result.stats);
+
+    currentGraphController = M.render(document.getElementById('graph'), result.graph);
+    graphPanel.classList.remove('hidden');
+
+    currentPlayback = M.buildPlayback(result.events, result.ticksPerQuarter);
+    playBtn.disabled = false;
+    stopBtn.disabled = true;
+    playbackInfo.textContent = `${currentPlayback.noteCount} notes ready. Click Play to start.`;
+  }
+
+  // Detect file type by extension. Both .mid and .musicxml use the input
+  // element's accepted MIME/extension list; we mirror that here.
+  function isMusicXml(name) {
+    const lower = name.toLowerCase();
+    return lower.endsWith('.musicxml') || lower.endsWith('.xml');
+  }
+
+  fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 16 * 1024 * 1024) {
+      playbackInfo.textContent = 'File too large. Limit is 16 MB.';
+      return;
+    }
+    if (isMusicXml(file.name)) {
+      const text = await file.text();
+      await loadMusicXmlText(text, file.name);
+    } else {
+      const buf = await file.arrayBuffer();
+      loadMidiBytes(new Uint8Array(buf), file.name);
+    }
+  });
+
+  loadDemoMidiBtn.addEventListener('click', async () => {
+    playbackInfo.textContent = 'Loading demo MIDI…';
+    const resp = await fetch('examples/minuet.mid');
+    if (!resp.ok) {
+      playbackInfo.textContent = 'Demo MIDI fetch failed (status ' + resp.status + ').';
+      return;
+    }
+    const buf = await resp.arrayBuffer();
+    loadMidiBytes(new Uint8Array(buf), 'examples/minuet.mid');
+  });
+
+  loadDemoXmlBtn.addEventListener('click', async () => {
+    playbackInfo.textContent = 'Loading demo MusicXML…';
+    const resp = await fetch('examples/minuet.musicxml');
+    if (!resp.ok) {
+      playbackInfo.textContent = 'Demo MusicXML fetch failed (status ' + resp.status + ').';
+      return;
+    }
+    const text = await resp.text();
+    await loadMusicXmlText(text, 'examples/minuet.musicxml');
+  });
+
+  playBtn.addEventListener('click', async () => {
+    if (!currentPlayback || isPlaying) return;
+    await Tone.start();
+    isPlaying = true;
+    playBtn.disabled = true;
+    stopBtn.disabled = false;
+    playbackInfo.textContent = `Playing ${currentPlayback.noteCount} notes…`;
+    await currentPlayback.play();
+    isPlaying = false;
+    playBtn.disabled = false;
+    stopBtn.disabled = true;
+    playbackInfo.textContent = `Played ${currentPlayback.noteCount} notes.`;
+  });
+
+  stopBtn.addEventListener('click', () => {
+    if (!currentPlayback) return;
+    currentPlayback.stop();
+    isPlaying = false;
+    playBtn.disabled = false;
+    stopBtn.disabled = true;
+    playbackInfo.textContent = 'Stopped.';
+  });
+})();

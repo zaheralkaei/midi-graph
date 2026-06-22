@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to=no">
+  <title>midi-graph</title>
+
+  <!-- D3 v7 for the force-directed graph. -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+
+  <!-- Tone.js for actual MIDI playback. -->
+  <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.min.js"></script>
+
+  <!-- OSMD (OpenSheetMusicDisplay) — loaded lazily by sheet.js the first time
+       a MusicXML file is opened. Renders real SVG sheet music in the browser. -->
+  <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.7/build/opensheetmusicdisplay.min.js"></script>
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>midi-graph</h1>
+  <p class="subtitle">Upload a MIDI or MusicXML file. See the note transition graph. Hear it played back. View the sheet music.</p>
+
+  <!-- Upload panel — always visible so you can swap files. -->
+  <div class="panel">
+    <div class="upload-row">
+      <input type="file" id="file" accept=".mid,.midi,.musicxml,.xml">
+      <button type="button" id="load-demo-midi">Load demo (Bach Minuet, .mid)</button>
+      <button type="button" id="load-demo-xml">Load demo (Bach Minuet, .musicxml)</button>
+      <span id="filename-display" class="filename-display"></span>
+    </div>
+  </div>
+
+  <!-- Stats panel — hidden until something is loaded. -->
+  <div class="panel hidden" id="stats-panel">
+    <h2>Summary</h2>
+    <div class="stats-grid" id="stats-grid"></div>
+    <h2 style="margin-top: 14px;">Top transitions</h2>
+    <div class="top-transitions" id="top-transitions"></div>
+  </div>
+
+  <!-- Sheet music panel — only shown for MusicXML files. -->
+  <div class="panel hidden" id="sheet-panel">
+    <h2>Sheet music</h2>
+    <div id="sheet-container"></div>
+  </div>
+
+  <!-- Graph panel -->
+  <div class="panel hidden" id="graph-panel">
+    <h2>Transition graph</h2>
+    <div class="graph-wrap">
+      <div id="graph"></div>
+      <div class="graph-controls">
+        <button class="secondary" id="zoom-in">Zoom in</button>
+        <button class="secondary" id="zoom-out">Zoom out</button>
+        <button class="secondary" id="reset-zoom">Reset</button>
+        <label><input type="checkbox" id="color-by-pitch-class" checked> Color by pitch class</label>
+        <label><input type="checkbox" id="edge-thickness-by-prob" checked> Edge thickness by probability</label>
+        <label>Min probability <input type="range" id="min-prob" min="0" max="100" value="0"> <span id="min-prob-val">0%</span></label>
+        <label>Min pitch <input type="range" id="min-pitch" min="0" max="127" value="0"> <span id="min-pitch-val">C-1</span></label>
+        <label>Max pitch <input type="range" id="max-pitch" min="0" max="127" value="127"> <span id="max-pitch-val">G9</span></label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Playback -->
+  <div class="panel">
+    <h2>Playback</h2>
+    <div class="playback-row">
+      <button id="play-btn" disabled>▶ Play</button>
+      <button class="danger" id="stop-btn" disabled>■ Stop</button>
+      <span class="info" id="playback-info">Upload a MIDI or MusicXML file first.</span>
+    </div>
+  </div>
+</div>
+
+<!-- App modules. midi.js has no DOM deps; graph + playback are loaded after. -->
+<script src="js/midi.js"></script>
+<script src="js/musicxml.js"></script>
+<script src="js/graph.js"></script>
+<script src="js/playback.js"></script>
+<script src="js/sheet.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
