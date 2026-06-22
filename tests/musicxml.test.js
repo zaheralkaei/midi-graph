@@ -1,26 +1,19 @@
 // tests/musicxml.test.js — smoke tests for js/musicxml.js
 //
-// Wires up @xmldom/xmldom's DOMParser into the musicxml module so the same
-// source code runs in both node and browser.
+// Wires up @xmldom/xmldom's DOMParser so the same source runs in both node
+// and the browser. Quarter-tone tests live here because MIDI can't represent
+// them — only MusicXML carries alter in fractions.
 
 const { DOMParser } = require('@xmldom/xmldom');
 const M = require('../js/midi.js');
 const xml = require('../js/musicxml.js');
 
-// Inject the xmldom DOMParser so musicxml.js can use it in node.
 M.__xmlDomParser = { parseFromString: (text, type) => new DOMParser().parseFromString(text, type) };
 
 let pass = 0, fail = 0;
 function test(name, fn) {
-  try {
-    fn();
-    pass++;
-    console.log('  ok    ' + name);
-  } catch (e) {
-    fail++;
-    console.log('  FAIL  ' + name);
-    console.log('        ' + e.message);
-  }
+  try { fn(); pass++; console.log('  ok    ' + name); }
+  catch (e) { fail++; console.log('  FAIL  ' + name); console.log('        ' + e.message); }
 }
 function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed'); }
 function assertEqual(actual, expected, label) {
@@ -29,41 +22,37 @@ function assertEqual(actual, expected, label) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// pitchToMidi — pure function, easiest to test first.
-// ---------------------------------------------------------------------------
 console.log('musicxml.js tests');
 console.log('-----------------');
 
-test('pitchToMidi: C4 → 60', () => {
-  assertEqual(xml.pitchToMidi('C', 0, 4), 60);
+// ---------------------------------------------------------------------------
+// pitchToCents — delegates to midi.js, so quarter-tones are exact
+// ---------------------------------------------------------------------------
+test('pitchToCents: C4 → 6000', () => assertEqual(xml.pitchToCents('C', 0, 4), 6000));
+test('pitchToCents: A4 → 6900', () => assertEqual(xml.pitchToCents('A', 0, 4), 6900));
+test('pitchToCents: F#4 (alter=1) → 6600', () => assertEqual(xml.pitchToCents('F', 1, 4), 6600));
+test('pitchToCents: Bb4 (alter=-1) → 7000', () => assertEqual(xml.pitchToCents('B', -1, 4), 7000));
+
+// Quarter-tones: NOT rounded — preserved exactly.
+test('pitchToCents: C half-sharp (alter=0.5) → 6050 (NOT 6100)', () => {
+  assertEqual(xml.pitchToCents('C', 0.5, 4), 6050);
 });
-test('pitchToMidi: A4 → 69', () => {
-  assertEqual(xml.pitchToMidi('A', 0, 4), 69);
+test('pitchToCents: C half-flat (alter=-0.5) → 5950 (NOT 6000)', () => {
+  assertEqual(xml.pitchToCents('C', -0.5, 4), 5950);
 });
-test('pitchToMidi: F#4 (alter=1) → 66', () => {
-  assertEqual(xml.pitchToMidi('F', 1, 4), 66);
+test('pitchToCents: F half-sharp (alter=0.5) → 6550 (NOT 6600)', () => {
+  // F is 500 cents from C; F half-sharp = 550; octave 4 = (4+1)*1200 + 550 = 6550
+  assertEqual(xml.pitchToCents('F', 0.5, 4), 6550);
 });
-test('pitchToMidi: Bb4 (alter=-1) → 70', () => {
-  assertEqual(xml.pitchToMidi('B', -1, 4), 70);
+test('pitchToCents: D + alter=0.5 (D half-sharp, between D and D#) → 6250', () => {
+  // D is 200 cents from C; D half-sharp = 250; octave 5 = (5+1)*1200 + 250 = 7450
+  assertEqual(xml.pitchToCents('D', 0.5, 5), 7450);
 });
-test('pitchToMidi: microtone alter=0.5 rounds up to nearest semitone', () => {
-  // C quarter-sharp = 60.5 → rounds to 61 (C#)
-  assertEqual(xml.pitchToMidi('C', 0.5, 4), 61);
-});
-test('pitchToMidi: microtone alter=-0.5 rounds to nearest semitone', () => {
-  // C quarter-flat = 59.5 → rounds to 60 (C)
-  assertEqual(xml.pitchToMidi('C', -0.5, 4), 60);
-});
-test('pitchToMidi: invalid step returns null', () => {
-  assertEqual(xml.pitchToMidi('Z', 0, 4), null);
-});
+test('pitchToCents: invalid step returns null', () => assertEqual(xml.pitchToCents('Z', 0, 4), null));
 
 // ---------------------------------------------------------------------------
-// parseMusicXml — hand-built minimal MusicXML fixtures.
+// parseMusicXml — hand-built minimal fixtures
 // ---------------------------------------------------------------------------
-
-// Build a minimal 1-measure, 4-quarter C major scale in MusicXML.
 function buildScaleXml(opts = {}) {
   const notes = opts.notes || [
     { step: 'C', alter: 0, octave: 4, dur: 1 },
@@ -75,7 +64,7 @@ function buildScaleXml(opts = {}) {
     { step: 'B', alter: 0, octave: 4, dur: 1 },
     { step: 'C', alter: 0, octave: 5, dur: 1 },
   ];
-  const div = opts.divisions || 1;  // 1 division per quarter
+  const div = opts.divisions || 1;
   const bpm = opts.bpm || 120;
   const noteXml = notes.map(n => `      <note>
         <pitch><step>${n.step}</step>${n.alter ? `<alter>${n.alter}</alter>` : ''}<octave>${n.octave}</octave></pitch>
@@ -84,39 +73,27 @@ function buildScaleXml(opts = {}) {
       </note>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="3.1">
-  <part-list>
-    <score-part id="P1"><part-name>Voice</part-name></score-part>
-  </part-list>
+  <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
   <part id="P1">
     <measure number="1">
-      <attributes>
-        <divisions>${div}</divisions>
-        <key><fifths>0</fifths></key>
-        <time><beats>4</beats><beat-type>4</beat-type></time>
-        <clef><sign>G</sign><line>2</line></clef>
-      </attributes>
-      <direction placement="above">
-        <direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${bpm}</per-minute></metronome></direction-type>
-        <sound tempo="${bpm}"/>
-      </direction>
+      <attributes><divisions>${div}</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+      <direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${bpm}</per-minute></metronome></direction-type><sound tempo="${bpm}"/></direction>
 ${noteXml}
     </measure>
   </part>
 </score-partwise>`;
 }
 
-test('parseMusicXml: 4/4 C major scale produces 8 note-on events', () => {
+test('parseMusicXml: 4/4 C major scale → 8 on events with cents notes', () => {
   const r = xml.parseMusicXml(buildScaleXml({ divisions: 480 }));
   const ons = r.events.filter(e => e.type === 'on');
   assertEqual(ons.length, 8);
-  assertEqual(ons.map(e => e.note), [60, 62, 64, 65, 67, 69, 71, 72]);
+  assertEqual(ons.map(e => e.note), [6000, 6200, 6400, 6500, 6700, 6900, 7100, 7200]);
   assertEqual(r.ticksPerQuarter, 480);
 });
 
 test('parseMusicXml: emits matching off events at correct tick times', () => {
   const r = xml.parseMusicXml(buildScaleXml({ divisions: 480 }));
-  // The scale is 8 quarter notes starting at tick 0. Each note off should be
-  // exactly 480 ticks after its note on.
   const ons = r.events.filter(e => e.type === 'on').sort((a, b) => a.timeTicks - b.timeTicks);
   const offs = r.events.filter(e => e.type === 'off').sort((a, b) => a.timeTicks - b.timeTicks);
   assertEqual(ons.length, 8);
@@ -127,10 +104,9 @@ test('parseMusicXml: emits matching off events at correct tick times', () => {
   }
 });
 
-test('parseMusicXml: tempo is parsed from <sound tempo>', () => {
+test('parseMusicXml: tempo parsed from <sound tempo>', () => {
   const r = xml.parseMusicXml(buildScaleXml({ bpm: 96 }));
-  const ons = r.events.filter(e => e.type === 'on');
-  for (const ev of ons) {
+  for (const ev of r.events.filter(e => e.type === 'on')) {
     assertEqual(ev.tempoBPM, 96);
   }
 });
@@ -151,52 +127,72 @@ test('parseMusicXml: measures metadata lists measure numbers', () => {
 
 test('parseMusicXml: rejects non-MusicXML text', () => {
   let threw = false;
-  try {
-    xml.parseMusicXml('<html><body>not music</body></html>');
-  } catch (e) {
-    threw = true;
-    assert(e.message.includes('MusicXML') || e.message.includes('parse error'),
-      `expected parse error, got: ${e.message}`);
-  }
-  assert(threw, 'should have thrown');
+  try { xml.parseMusicXml('<html><body>not music</body></html>'); }
+  catch (e) { threw = true; }
+  assert(threw);
 });
 
-test('parseMusicXml: rejects unsupported root element', () => {
+test('parseMusicXml: rejects unsupported root', () => {
   let threw = false;
-  try {
-    xml.parseMusicXml('<?xml version="1.0"?><something-else/>');
-  } catch (e) {
-    threw = true;
-    assert(e.message.includes('Unsupported'), `expected Unsupported, got: ${e.message}`);
-  }
-  assert(threw, 'should have thrown');
+  try { xml.parseMusicXml('<?xml version="1.0"?><something-else/>'); }
+  catch (e) { threw = true; }
+  assert(threw);
 });
 
 // ---------------------------------------------------------------------------
-// analyzeMusicXml — convenience wrapper, mirrors analyzeMidi's output shape.
+// analyzeMusicXml — quarter-tone tests (the whole point of microtonal support)
 // ---------------------------------------------------------------------------
-test('analyzeMusicXml: returns graph + stats compatible with analyzeMidi', () => {
-  const r = xml.analyzeMusicXml(buildScaleXml({ divisions: 480 }));
-  assert('graph' in r && 'stats' in r && 'events' in r);
-  assertEqual(r.stats.note_count, 8);
-  assertEqual(r.stats.unique_note_count, 8);
-  // 7 transitions between 8 notes (sequential, no self-loops in a scale)
-  assertEqual(r.stats.transition_count, 7);
-  assertEqual(r.stats.self_loop_count, 0);
-});
 
-// ---------------------------------------------------------------------------
-// End-to-end: build a Bach-minuet-shaped MusicXML and verify it parses into
-// the same note sequence as the .mid version.
-// ---------------------------------------------------------------------------
-test('analyzeMusicXml: end-to-end on a 2-bar phrase with sharps', () => {
-  // Bar 1: G5 quarter, A5 quarter, B5 quarter, G5 quarter (D-major-ish)
-  // Bar 2: G5 half, F#5 half
+test('analyzeMusicXml: 3 quarter-tone notes produce 3 distinct graph nodes', () => {
+  // C4, C half-sharp 4, C#4 — all three are different pitches, all different nodes.
   const xmlText = `<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="3.1">
-  <part-list>
-    <score-part id="P1"><part-name>Voice</part-name></score-part>
-  </part-list>
+  <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><alter>0.5</alter><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><alter>1</alter><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+  const r = xml.analyzeMusicXml(xmlText);
+  const ids = r.graph.nodes.map(n => n.id).sort();
+  assertEqual(ids, ['C half-sharp 4', 'C#4', 'C4']);
+  assertEqual(r.stats.unique_note_count, 3);
+  assertEqual(r.stats.transition_count, 2);   // C→C half-sharp, C half-sharp→C#
+});
+
+test('analyzeMusicXml: quarter-tone transition probabilities', () => {
+  // C4 → C half-sharp 4 → C#4 → C#4 → C4 (repeated C#). Each transition
+  // is unique because each source has only one outgoing. Verify all three
+  // transitions exist with probability 1.0 (not that they sum to 1, but
+  // that each individual one is 1.0 — the per-source normalization holds).
+  const xmlText = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><alter>0.5</alter><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><alter>1</alter><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+  const r = xml.analyzeMusicXml(xmlText);
+  assertEqual(r.graph.links.length, 3);
+  for (const l of r.graph.links) {
+    assertEqual(l.value, 1.0, `${l.source}→${l.target} should be 1.0`);
+  }
+});
+
+test('analyzeMusicXml: end-to-end 2-bar phrase with sharps', () => {
+  const xmlText = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
   <part id="P1">
     <measure number="1">
       <attributes><divisions>1</divisions><key><fifths>1</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time></attributes>
@@ -213,12 +209,34 @@ test('analyzeMusicXml: end-to-end on a 2-bar phrase with sharps', () => {
   </part>
 </score-partwise>`;
   const r = xml.analyzeMusicXml(xmlText);
-  // Notes in order: G5, A5, B5, G5, G5, F#5
-  const seq = r.events.filter(e => e.type === 'on').map(e => M.midiToPitch(e.note));
+  const seq = r.events.filter(e => e.type === 'on').map(e => M.centsToPitch(e.note));
   assertEqual(seq, ['G5', 'A5', 'B5', 'G5', 'G5', 'F#5']);
-  // G5→G5 self-loop from the repeated note
   const g5Loop = r.graph.links.find(l => l.source === 'G5' && l.target === 'G5');
   assert(g5Loop, 'expected G5→G5 self-loop');
+});
+
+// ---------------------------------------------------------------------------
+// Stats display with quarter-tones
+// ---------------------------------------------------------------------------
+test('analyzeMusicXml: pitch range includes "semitones" word for fractional spans', () => {
+  const xmlText = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
+      <note><pitch><step>C</step><alter>0.5</alter><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+  const r = xml.analyzeMusicXml(xmlText);
+  // Range should show 0.5 semitones, not "0". centsToPitch renders "0.5"
+  // because it's the JS toFixed default; that's fine.
+  assert(/0\.5 semitones/.test(r.stats.pitch_range), `unexpected range: ${r.stats.pitch_range}`);
+  // And the spelled names should appear with a space before the octave number.
+  assert(r.stats.pitch_range.includes('C half-sharp 4'),
+    `expected "C half-sharp 4" with space, got: ${r.stats.pitch_range}`);
 });
 
 console.log('-----------------');

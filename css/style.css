@@ -93,6 +93,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .node-label {
   font-size: 11px;
   fill: #fff;
+  /* Text stroke for contrast against any circle color (works on yellow,
+     green, cyan, white, etc.). 1.5px is enough to be readable without
+     making thin letters look heavy. */
+  stroke: rgba(0, 0, 0, 0.85);
+  stroke-width: 1.5px;
+  paint-order: stroke fill;
   pointer-events: none;
   user-select: none;
 }
@@ -101,12 +107,32 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   fill: #888;
   pointer-events: none;
   user-select: none;
+  /* Hidden by default — labels overlap badly in dense graphs. Shown on
+     edge hover via the .visible class set in graph.js. */
+  opacity: 0;
+  transition: opacity 0.1s;
 }
+.link-label.visible { opacity: 1; }
 .self-loop-label {
   font-size: 9px;
   fill: var(--accent);
   pointer-events: none;
   user-select: none;
+}
+
+/* Active-node glow: drop-shadow that pulses while the pitch is sounding.
+   The animation runs on every node but only nodes with .active get the
+   filter applied (the rest keep the default 0 0 0 transparent shadow). */
+.node {
+  /* No filter by default — needed so non-active nodes render fast. */
+}
+.node.active {
+  filter: drop-shadow(0 0 6px #00e5ff) drop-shadow(0 0 14px #00e5ff);
+  animation: pulse-glow 0.6s ease-in-out infinite alternate;
+}
+@keyframes pulse-glow {
+  from { filter: drop-shadow(0 0 4px #00e5ff) drop-shadow(0 0 10px #00e5ff); }
+  to   { filter: drop-shadow(0 0 10px #00e5ff) drop-shadow(0 0 22px #00e5ff); }
 }
 
 /* ----- Playback ----- */

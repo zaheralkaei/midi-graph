@@ -9,39 +9,117 @@
 //       tempoBPM is the tempo ACTIVE at that event (so callers can convert to seconds
 //       correctly even with multiple tempo changes).
 //       type is 'on' (velocity>0) or 'off' (note-off OR note-on vel=0).
+//       note is in CENTS above C0 (C4 = 6000). Float, supports quarter-tones.
 //
 //   notesFromEvents(events)                       → number[]
-//       Flat playback-order list of note numbers (note_on with vel>0 only).
-//       Concatenates all tracks, mirroring the Python read_midi_file() behavior.
+//       Flat playback-order list of note cents values.
 //
 //   buildTransitionGraph(notes)                   → { nodes, links }
-//       nodes: [{id}] sorted by pitch (D3-friendly).
+//       nodes: [{id}] sorted by pitch (D3-friendly). Quarter-tones get their own node.
 //       links: [{source, target, value}] where value is the empirical probability.
 //
 //   computeStats(notes, graph)                    → { ... }
 //       note_count, unique_note_count, unique_notes, transition_count,
 //       top_transitions, self_loop_count, self_loop_share, pitch_range.
 //
-//   midiToPitch(noteNumber)                       → "C4"
-//   pitchClass(noteNumber)                        → "C"
+//   centsToPitch(cents)                           → "C4" or "C# half-sharp 4"
+//   stepAlterOctaveToCents(step, alter, octave)   → number (e.g. C half-sharp, 4 → 6050)
+//   pitchClass(cents)                             → "C" / "C#" / "C half-sharp"
 //
 //   ticksToSeconds(timeTicks, tempoBPM, ticksPerQuarter)
 //       Convert a single tick time to seconds using the given tempo.
 //       Callers handling multi-tempo sequences must walk events in order and
 //       re-base when tempoBPM changes — see ticksToSecondsSegments() helper.
 
-// Sharp names (C# not Db) — standard music-theory convention. Pieces in
-// sharp keys (G major, D major, etc.) render naturally; flat-key pieces
-// (F major, Bb major) get the sharp spelling of their chromatic neighbors.
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+// ---------------------------------------------------------------------------
+// Pitch identity: cents above C0. C4 = 6000. Quarter-tones are exact floats.
+// Internal events carry `note` in cents, not as MIDI int. This means a C
+// quarter-sharp (alter=0.5, octave=4) is exactly 6050.0 and stays distinct
+// from C#4 (6100.0) all the way through transitions, stats, and playback.
+// ---------------------------------------------------------------------------
 
-function midiToPitch(n) {
-  return NOTE_NAMES[n % 12] + (Math.floor(n / 12) - 1);
+// Cents from C within one octave for each natural / sharp note (12-TET).
+const SHARP_CENTS_FROM_C = {
+  C: 0, 'C#': 100, D: 200, 'D#': 300, E: 400, F: 500,
+  'F#': 600, G: 700, 'G#': 800, A: 900, 'A#': 1000, B: 1100,
+};
+
+// Display names for the 24 quarter-tones within an octave. We name every
+// half-tone as "[lower note] half-sharp" (sharp-going-up convention). The
+// alternative "half-flat" spelling is equivalent but harder to scan visually.
+// Names like "C half-sharp" are plain English per the project's house style.
+const QUARTER_TONE_NAMES = [
+  { cents:    0, name: 'C' },
+  { cents:   50, name: 'C half-sharp' },
+  { cents:  100, name: 'C#' },
+  { cents:  150, name: 'C# half-sharp' },
+  { cents:  200, name: 'D' },
+  { cents:  250, name: 'D half-sharp' },
+  { cents:  300, name: 'D#' },
+  { cents:  350, name: 'D# half-sharp' },
+  { cents:  400, name: 'E' },
+  { cents:  450, name: 'E half-sharp' },
+  { cents:  500, name: 'F' },
+  { cents:  550, name: 'F half-sharp' },
+  { cents:  600, name: 'F#' },
+  { cents:  650, name: 'F# half-sharp' },
+  { cents:  700, name: 'G' },
+  { cents:  750, name: 'G half-sharp' },
+  { cents:  800, name: 'G#' },
+  { cents:  850, name: 'G# half-sharp' },
+  { cents:  900, name: 'A' },
+  { cents:  950, name: 'A half-sharp' },
+  { cents: 1000, name: 'A#' },
+  { cents: 1050, name: 'A# half-sharp' },
+  { cents: 1100, name: 'B' },
+  { cents: 1150, name: 'B half-sharp' },
+];
+
+// step+alter+octave → cents above C0. alter is in semitones (0, 0.5, 1, 1.5, ...).
+// Negative alter is also supported (e.g. alter=-0.5 = quarter-flat of the
+// note above; same as half-sharp of the note below).
+function stepAlterOctaveToCents(step, alter, octave) {
+  const base = SHARP_CENTS_FROM_C[step];
+  if (base === undefined) return null;
+  // MusicXML octave numbering: middle C (MIDI 60) is octave 4.
+  // C0 = MIDI 12 = cents 0; so (octave+1)*1200 + offset, where offset is
+  // step cents + alter cents (alter is in semitones, so × 100).
+  const a = alter == null ? 0 : alter;
+  return (octave + 1) * 1200 + base + Math.round(a * 100);
 }
 
-function pitchClass(n) {
-  return NOTE_NAMES[n % 12];
+// cents → display name like "C4" or "C# half-sharp 4".
+function centsToPitch(cents) {
+  if (cents == null || !isFinite(cents)) return '?';
+  const octave = Math.floor(cents / 1200) - 1;
+  const withinOctave = cents - (octave + 1) * 1200;
+  // Round to nearest 50 cents. Quarter-tones are exact at multiples of 50;
+  // anything else (e.g. 25-cent eighth-tones from non-standard alters) rounds
+  // to the nearest quarter-tone. This is intentional — we name by cents-to-nearest-50.
+  const rounded = Math.round(withinOctave / 50) * 50;
+  const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
+  if (match) {
+    // Insert a space between name and octave when the name itself contains
+    // a space (e.g. "C half-sharp" + 4 → "C half-sharp 4"). Plain names
+    // ("C", "C#") stay concatenated as before ("C4", "C#4").
+    const sep = match.name.includes(' ') ? ' ' : '';
+    return match.name + sep + octave;
+  }
+  return `?${cents}`;
 }
+
+// cents → just the pitch-class part (no octave). Used for the 24-class color scale.
+function pitchClass(cents) {
+  if (cents == null || !isFinite(cents)) return '?';
+  const withinOctave = ((cents % 1200) + 1200) % 1200;  // handle negative
+  const rounded = Math.round(withinOctave / 50) * 50;
+  const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
+  return match ? match.name : '?';
+}
+
+// Quarter-tone class names used by the graph color scale. Includes all 24
+// possible pitch classes within an octave.
+const PITCH_CLASSES = QUARTER_TONE_NAMES.map(t => t.name);
 
 // ---------------------------------------------------------------------------
 // Variable-length quantity (VLQ) — MIDI's compact integer encoding.
@@ -141,18 +219,21 @@ function parseMidi(bytes) {
       } else {
         const hi = status & 0xf0;
         if (hi === 0x90) {
-          const note = track[p++];
+          const midiNote = track[p++];
           const vel = track[p++];
+          // MIDI is 12-TET — note byte → cents is exact (×100).
+          const cents = midiNote * 100;
           if (vel > 0) {
-            events.push({ timeTicks: t, type: 'on', note, vel, tempoBPM });
+            events.push({ timeTicks: t, type: 'on', note: cents, vel, tempoBPM });
           } else {
             // note_on with velocity 0 is the standard "note_off" shorthand.
-            events.push({ timeTicks: t, type: 'off', note, tempoBPM });
+            events.push({ timeTicks: t, type: 'off', note: cents, tempoBPM });
           }
         } else if (hi === 0x80) {
-          const note = track[p++];
+          const midiNote = track[p++];
           const vel = track[p++];
-          events.push({ timeTicks: t, type: 'off', note, vel, tempoBPM });
+          const cents = midiNote * 100;
+          events.push({ timeTicks: t, type: 'off', note: cents, vel, tempoBPM });
         } else if (hi === 0xa0 || hi === 0xb0 || hi === 0xe0) {
           // Aftertouch / CC / pitch-bend — 2 data bytes.
           p += 2;
@@ -205,10 +286,10 @@ function buildTransitionGraph(notes) {
   const links = [];
   for (const [cur, inner] of counts) {
     const total = totals.get(cur);
-    const curName = midiToPitch(cur);
+    const curName = centsToPitch(cur);
     nodeSet.add(curName);
     for (const [nxt, count] of inner) {
-      const nxtName = midiToPitch(nxt);
+      const nxtName = centsToPitch(nxt);
       nodeSet.add(nxtName);
       links.push({ source: curName, target: nxtName, value: count / total });
     }
@@ -223,7 +304,7 @@ function buildTransitionGraph(notes) {
 // ---------------------------------------------------------------------------
 function computeStats(notes, graph) {
   const uniqueNotes = Array.from(new Set(notes)).sort((a, b) => a - b);
-  const uniqueNames = uniqueNotes.map(midiToPitch);
+  const uniqueNames = uniqueNotes.map(centsToPitch);
 
   // Flatten links → ranked triples (from, to, probability).
   const ranked = graph.links.map(l => [l.source, l.target, l.value]);
@@ -237,7 +318,18 @@ function computeStats(notes, graph) {
   if (uniqueNotes.length) {
     const lo = uniqueNotes[0];
     const hi = uniqueNotes[uniqueNotes.length - 1];
-    rangeStr = `${midiToPitch(lo)} – ${midiToPitch(hi)} (${hi - lo} semitones)`;
+    // hi - lo is now in cents. 100 cents = 1 semitone.
+    const semitones = (hi - lo) / 100;
+    let semStr;
+    if (semitones % 1 === 0) {
+      semStr = String(semitones);
+    } else if (Number.isInteger(semitones * 2)) {
+      // Half-semitone — show as 0.5, not 0.50
+      semStr = (semitones).toFixed(1);
+    } else {
+      semStr = semitones.toFixed(2);
+    }
+    rangeStr = `${centsToPitch(lo)} – ${centsToPitch(hi)} (${semStr} semitones)`;
   }
 
   return {
@@ -331,9 +423,12 @@ function analyzeMidi(bytes) {
 // Exports — CommonJS for node tests, globals for browser <script> tag.
 // ---------------------------------------------------------------------------
 const api = {
-  NOTE_NAMES,
-  midiToPitch,
+  NOTE_NAMES: QUARTER_TONE_NAMES.map(t => t.name),  // 24 names per octave
+  PITCH_CLASSES,
+  QUARTER_TONE_NAMES,
+  centsToPitch,
   pitchClass,
+  stepAlterOctaveToCents,
   readVarLen,
   parseMidi,
   notesFromEvents,

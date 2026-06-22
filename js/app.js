@@ -7,6 +7,7 @@
   const fileInput = document.getElementById('file');
   const loadDemoMidiBtn = document.getElementById('load-demo-midi');
   const loadDemoXmlBtn = document.getElementById('load-demo-xml');
+  const loadDemoQuartBtn = document.getElementById('load-demo-quartertones');
   const filenameDisplay = document.getElementById('filename-display');
   const statsPanel = document.getElementById('stats-panel');
   const graphPanel = document.getElementById('graph-panel');
@@ -98,15 +99,23 @@
       sheetPanel.classList.remove('hidden');
       sheetContainer.innerHTML = '<p style="color: var(--muted);">Sheet music renderer (OSMD) failed to load from CDN. The transition graph still works.</p>';
     }
+    // Bring the sheet into view — it's above the graph on the page, but on
+    // shorter viewports the user might not see it without scrolling.
+    sheetPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function finishLoad(result) {
     renderStats(result.stats);
 
-    currentGraphController = M.render(document.getElementById('graph'), result.graph);
+    const graphContainer = document.getElementById('graph');
+    currentGraphController = M.render(graphContainer, result.graph);
     graphPanel.classList.remove('hidden');
 
-    currentPlayback = M.buildPlayback(result.events, result.ticksPerQuarter);
+    // Wire playback callbacks so the graph glows when each pitch is sounding.
+    currentPlayback = M.buildPlayback(result.events, result.ticksPerQuarter, {
+      onNoteOn: (cents) => currentGraphController.setActive(cents, true),
+      onNoteOff: (cents) => currentGraphController.setActive(cents, false),
+    });
     playBtn.disabled = false;
     stopBtn.disabled = true;
     playbackInfo.textContent = `${currentPlayback.noteCount} notes ready. Click Play to start.`;
@@ -155,6 +164,17 @@
     }
     const text = await resp.text();
     await loadMusicXmlText(text, 'examples/minuet.musicxml');
+  });
+
+  loadDemoQuartBtn.addEventListener('click', async () => {
+    playbackInfo.textContent = 'Loading quarter-tone demo…';
+    const resp = await fetch('examples/quartertones.musicxml');
+    if (!resp.ok) {
+      playbackInfo.textContent = 'Quarter-tone demo fetch failed (status ' + resp.status + ').';
+      return;
+    }
+    const text = await resp.text();
+    await loadMusicXmlText(text, 'examples/quartertones.musicxml');
   });
 
   playBtn.addEventListener('click', async () => {

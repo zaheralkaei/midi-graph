@@ -12,3 +12,15 @@
   [headers.values]
     Content-Type = "audio/midi"
     Cache-Control = "public, max-age=3600"
+
+[[headers]]
+  for = "/examples/*.musicxml"
+  [headers.values]
+    Content-Type = "application/vnd.recordare.musicxml+xml"
+    Cache-Control = "public, max-age=3600"
+
+[[headers]]
+  for = "/vendor/*.js"
+  [headers.values]
+    Content-Type = "application/javascript"
+    Cache-Control = "public, max-age=86400"

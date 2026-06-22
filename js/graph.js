@@ -1,42 +1,47 @@
 // graph.js — D3 force-directed graph for the transition network.
 //
 // Public API:
-//   MidiGraph.render(containerEl, graph)   — render the graph in the given container.
-//                                             Returns a controller with:
-//                                                update(graph)    re-render with new data
-//                                                destroy()        tear down
-//
-// Internal: d3.forceSimulation with link distance 80, charge -250,
-// center+collide, draggable nodes, zoom/pan on the SVG.
+//   MidiGraph.render(containerEl, graph)   → controller {
+//     update(graph), destroy(),
+//     setActive(cents, on), clearActive(),
+//   }
 //
 // The graph shape is { nodes: [{id}], links: [{source, target, value}] }
-// produced by MidiGraph.buildTransitionGraph().
+// produced by MidiGraph.buildTransitionGraph(). Cents-based: node IDs are
+// spelled-out pitch names like "C4" or "C# half-sharp 4".
 
 (function () {
   const M = window.MidiGraph;
 
-  // 12 pitch classes, one color each. Sharp spelling (F# is index 6).
-  const NOTE_NAMES = M.NOTE_NAMES;
+  // 24 pitch classes (12 naturals/sharps + 12 half-sharps). One distinct color
+  // each. The natural/sharp colors are saturated; the half-sharps are paler
+  // versions so they read as "between" their neighbors.
+  const PITCH_CLASSES = M.PITCH_CLASSES;  // 24 names per octave
   const pitchClassColor = d3.scaleOrdinal()
-    .domain(NOTE_NAMES)
-    .range(['#ff5252','#ff9d52','#ffd452','#52ff5d','#52ffd1','#52a8ff',
-            '#9d52ff','#ff52d1','#ff5252','#ff9d52','#ffd452','#a8ff52']);
+    .domain(PITCH_CLASSES)
+    .range([
+      // Naturals/sharps — saturated palette
+      '#ff5252', '#ff9d52', '#ffd452', '#52ff5d', '#52ffd1', '#52a8ff',
+      '#9d52ff', '#ff52d1', '#ff5252', '#ff9d52', '#ffd452', '#a8ff52',
+      // Half-sharps — paler versions of the colors between them
+      '#ffb1b1', '#ffc994', '#ffe9a9', '#a9ffae', '#a9ffe8', '#a9d4ff',
+      '#ceaeff', '#ffaeec', '#ffb1b1', '#ffc994', '#ffe9a9', '#d4ffae',
+    ]);
 
-  // Parse a pitch-id like "F#5" or "C-1" back to a MIDI note number.
-  // Used by the min/max pitch-range filter.
+  // Parse a pitch-id like "F#5" or "C half-sharp 5" back to cents above C0.
   function pitchOf(id) {
-    const m = id.match(/^([A-G][#]?)(-?\d+)$/);
-    if (!m) return 60;
-    const pc = NOTE_NAMES.indexOf(m[1]);
-    const octave = parseInt(m[2], 10);
-    return (octave + 1) * 12 + pc;
+    if (id == null) return 6000;
+    const m = id.match(/^([A-G][#]?)(?: (half-sharp))?(-?\d+)$/);
+    if (!m) return 6000;
+    const pc = M.NOTE_NAMES.indexOf(m[1]);
+    if (pc < 0) return 6000;
+    const octave = parseInt(m[3], 10);
+    const centsInOctave = pc * 100 + (m[2] ? 50 : 0);
+    return (octave + 1) * 1200 + centsInOctave;
   }
 
   function render(container, graph) {
-    // Don't rely on clientWidth/clientHeight — if the container was display:none
-    // when render() was called (the panel was just unhidden), those are 0 and
-    // the SVG ends up width=0/height=0. CSS sets the container to 100% width
-    // and a fixed height; we let the SVG fill that via width=100% / height=100%.
+    // CSS-driven SVG sizing — never trust clientWidth/clientHeight here.
     const svg = d3.select(container).append('svg')
       .attr('width', '100%')
       .attr('height', '100%')
@@ -48,8 +53,6 @@
       .on('zoom', e => g.attr('transform', e.transform));
     svg.call(zoom);
 
-    // Use the container's CSS-rendered size for the force center.
-    // Read it on every tick so resize events don't leave the graph off-center.
     function getSize() {
       const r = container.getBoundingClientRect();
       return { w: Math.max(200, r.width), h: Math.max(200, r.height) };
@@ -61,10 +64,14 @@
     const nodeGroup = g.append('g').attr('class', 'nodes');
     const labelGroup = g.append('g').attr('class', 'node-labels');
 
-    // The raw graph is immutable from the caller's perspective. We mutate
-    // working copies on filter changes so the source data stays clean.
     let workingNodes = graph.nodes.map(n => ({...n}));
     let workingLinks = graph.links.map(l => ({...l}));
+
+    // Active-node tracking for playback glow.
+    // Map cents → number of currently-sounding voices on that pitch.
+    // Decremented on note-off so overlapping notes keep the glow on.
+    const activeCount = new Map();
+    const activeName = new Map();   // cents → node id (e.g. "C# half-sharp 4")
 
     const { w: width, h: height } = getSize();
     let simulation = d3.forceSimulation()
@@ -98,7 +105,7 @@
       const linkEnter = linkSel.enter().append('path');
       const linkAll = linkEnter.merge(linkSel);
 
-      // Self-loop labels (probability of A→A)
+      // Self-loop labels
       const selfLoops = links.filter(d => d.source === d.target);
       const loopLabelSel = selfLoopLabelGroup.selectAll('text').data(selfLoops, d => d.source);
       loopLabelSel.exit().remove();
@@ -107,14 +114,14 @@
         .merge(loopLabelSel)
         .text(d => (d.value * 100).toFixed(0) + '%');
 
-      // Other-edge labels
+      // Other-edge labels (hidden by default, shown on edge hover via CSS).
       const otherLinks = links.filter(d => d.source !== d.target);
       const linkLabelSel = linkLabelGroup.selectAll('text').data(otherLinks, d => d.source + '->' + d.target);
       linkLabelSel.exit().remove();
-      linkLabelSel.enter().append('text')
+      const linkLabelEnter = linkLabelSel.enter().append('text')
         .attr('class', 'link-label')
-        .attr('text-anchor', 'middle')
-        .merge(linkLabelSel)
+        .attr('text-anchor', 'middle');
+      const linkLabelAll = linkLabelEnter.merge(linkLabelSel)
         .text(d => (d.value * 100).toFixed(0) + '%');
 
       // ----- Nodes -----
@@ -128,10 +135,17 @@
           .on('end',   (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
 
       const colorByClass = document.getElementById('color-by-pitch-class').checked;
-      nodeAll.attr('fill', d => colorByClass ? pitchClassColor(M.pitchClass(pitchOf(d.id))) : '#00e5ff')
+      nodeAll
+        .attr('fill', d => colorByClass ? pitchClassColor(M.pitchClass(pitchOf(d.id))) : '#00e5ff')
+        .attr('class', d => {
+          // Preserve any active-glow class on rebuild.
+          const cents = pitchOf(d.id);
+          return activeCount.get(cents) > 0 ? 'node active' : 'node';
+        })
+        .each(function(d) { activeName.set(pitchOf(d.id), d.id); })
         .append('title').text(d => d.id);
 
-      // ----- Node labels -----
+      // ----- Node labels (with text-stroke for contrast against any circle color) -----
       const labelSel = labelGroup.selectAll('text').data(nodes, d => d.id);
       labelSel.exit().remove();
       labelSel.enter().append('text')
@@ -141,6 +155,21 @@
         .merge(labelSel)
         .text(d => d.id);
 
+      // Edge hover: highlight the edge + show its label briefly.
+      linkAll
+        .on('mouseenter', function(ev, d) {
+          d3.select(this).attr('stroke', '#fff').attr('stroke-opacity', 1);
+          const id = d.source + '->' + d.target;
+          linkLabelGroup.selectAll('text').filter(td => td.source + '->' + td.target === id)
+            .classed('visible', true);
+        })
+        .on('mouseleave', function(ev, d) {
+          d3.select(this).attr('stroke', '#666').attr('stroke-opacity', 0.55);
+          const id = d.source + '->' + d.target;
+          linkLabelGroup.selectAll('text').filter(td => td.source + '->' + td.target === id)
+            .classed('visible', false);
+        });
+
       // ----- Tick -----
       simulation.nodes(nodes);
       simulation.force('link').links(links);
@@ -148,7 +177,6 @@
 
       simulation.on('tick', () => {
         const thicknessOn = document.getElementById('edge-thickness-by-prob').checked;
-        // Re-center on every tick so window resizes don't leave the graph off-screen.
         const { w, h } = getSize();
         simulation.force('center').x(w / 2).y(h / 2);
         linkAll
@@ -170,13 +198,30 @@
           .attr('x', d => d.source.x)
           .attr('y', d => d.source.y - 22);
 
-        linkLabelGroup.selectAll('text')
+        linkLabelAll
           .attr('x', d => (d.source.x + d.target.x) / 2)
           .attr('y', d => (d.source.y + d.target.y) / 2 - 4);
 
         nodeAll.attr('cx', d => d.x).attr('cy', d => d.y);
         labelSel.attr('x', d => d.x).attr('y', d => d.y);
       });
+    }
+
+    // Active-note glow controller. Called by playback.js via callbacks.
+    function setActive(cents, on) {
+      const name = activeName.get(cents);
+      if (!name) return;  // node was filtered out; nothing to glow
+      const cur = activeCount.get(cents) || 0;
+      const next = on ? cur + 1 : Math.max(0, cur - 1);
+      if (next === 0) activeCount.delete(cents);
+      else activeCount.set(cents, next);
+      nodeGroup.selectAll('circle')
+        .filter(d => d.id === name)
+        .classed('active', next > 0);
+    }
+    function clearActive() {
+      activeCount.clear();
+      nodeGroup.selectAll('circle').classed('active', false);
     }
 
     rebuild();
@@ -193,17 +238,16 @@
       rebuild();
     });
     minPitchInput.addEventListener('input', e => {
-      document.getElementById('min-pitch-val').textContent = M.midiToPitch(+e.target.value);
+      document.getElementById('min-pitch-val').textContent = M.centsToPitch(+e.target.value);
       rebuild();
     });
     maxPitchInput.addEventListener('input', e => {
-      document.getElementById('max-pitch-val').textContent = M.midiToPitch(+e.target.value);
+      document.getElementById('max-pitch-val').textContent = M.centsToPitch(+e.target.value);
       rebuild();
     });
     colorToggle.addEventListener('change', rebuild);
     thicknessToggle.addEventListener('change', rebuild);
 
-    // Zoom buttons.
     document.getElementById('zoom-in').onclick  = () => svg.transition().call(zoom.scaleBy, 1.3);
     document.getElementById('zoom-out').onclick = () => svg.transition().call(zoom.scaleBy, 0.77);
     document.getElementById('reset-zoom').onclick = () => svg.transition().call(zoom.transform, d3.zoomIdentity);
@@ -218,10 +262,11 @@
         simulation.stop();
         svg.remove();
       },
+      setActive,
+      clearActive,
     };
   }
 
-  // Expose
   M.render = render;
   M.pitchOf = pitchOf;
 })();

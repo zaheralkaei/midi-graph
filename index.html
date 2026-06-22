@@ -11,9 +11,10 @@
   <!-- Tone.js for actual MIDI playback. -->
   <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.min.js"></script>
 
-  <!-- OSMD (OpenSheetMusicDisplay) — loaded lazily by sheet.js the first time
-       a MusicXML file is opened. Renders real SVG sheet music in the browser. -->
-  <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.7/build/opensheetmusicdisplay.min.js"></script>
+  <!-- OSMD (OpenSheetMusicDisplay) — bundled locally at vendor/opensheetmusicdisplay.min.js
+       with jsdelivr as a fallback. Renders real SVG sheet music in the browser. -->
+  <script src="vendor/opensheetmusicdisplay.min.js"
+          onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.7/build/opensheetmusicdisplay.min.js';"></script>
 
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -28,6 +29,7 @@
       <input type="file" id="file" accept=".mid,.midi,.musicxml,.xml">
       <button type="button" id="load-demo-midi">Load demo (Bach Minuet, .mid)</button>
       <button type="button" id="load-demo-xml">Load demo (Bach Minuet, .musicxml)</button>
+      <button type="button" id="load-demo-quartertones">Load demo (quarter-tones, .musicxml)</button>
       <span id="filename-display" class="filename-display"></span>
     </div>
   </div>
@@ -58,8 +60,8 @@
         <label><input type="checkbox" id="color-by-pitch-class" checked> Color by pitch class</label>
         <label><input type="checkbox" id="edge-thickness-by-prob" checked> Edge thickness by probability</label>
         <label>Min probability <input type="range" id="min-prob" min="0" max="100" value="0"> <span id="min-prob-val">0%</span></label>
-        <label>Min pitch <input type="range" id="min-pitch" min="0" max="127" value="0"> <span id="min-pitch-val">C-1</span></label>
-        <label>Max pitch <input type="range" id="max-pitch" min="0" max="127" value="127"> <span id="max-pitch-val">G9</span></label>
+        <label>Min pitch <input type="range" id="min-pitch" min="0" max="10800" step="50" value="0"> <span id="min-pitch-val">C-1</span></label>
+        <label>Max pitch <input type="range" id="max-pitch" min="0" max="10800" step="50" value="10800"> <span id="max-pitch-val">C8</span></label>
       </div>
     </div>
   </div>

@@ -8,8 +8,10 @@
 // Handles score-partwise (the overwhelmingly common format) and score-timewise
 // (rare; flattened to partwise internally).
 //
-// Microtonal support is a no-op here — the basic parser rounds alter to the
-// nearest MIDI key. Quarter-tone support comes later as a separate enhancement.
+// Microtonal support is full — quarter-tones (alter = -1.5, -0.5, 0.5, 1.5)
+// are preserved exactly as cents above C0. A C# half-sharp (alter=0.5, step=C)
+// produces cents 6050 and stays distinct from C# (6100) and D (6200) through
+// the entire pipeline.
 
 (function () {
   const M = (typeof window !== 'undefined' ? window.MidiGraph : require('./midi.js'));
@@ -56,16 +58,11 @@
   }
 
   // ---------------------------------------------------------------------------
-  // pitch → MIDI note number. Rounds microtones to the nearest semitone
-  // (a sharp at alter=0.5 lands on the nearest whole pitch).
+  // step+alter+octave → cents. Delegates to the shared helper in midi.js so
+  // quarter-tones (alter = -1.5, -0.5, 0.5, 1.5) are preserved exactly.
   // ---------------------------------------------------------------------------
-  function pitchToMidi(step, alter, octave) {
-    const base = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[step];
-    if (base === undefined) return null;
-    const a = alter == null ? 0 : alter;
-    // 12 semitones per octave, C4 = 60. octave is the MusicXML octave number
-    // where middle C is octave 4.
-    return (octave + 1) * 12 + base + Math.round(a);
+  function pitchToCents(step, alter, octave) {
+    return M.stepAlterOctaveToCents(step, alter, octave);
   }
 
   // ---------------------------------------------------------------------------
@@ -207,8 +204,8 @@
             continue;
           }
 
-          const midi = pitchToMidi(step, alter, octave);
-          if (midi == null) {
+          const cents = pitchToCents(step, alter, octave);
+          if (cents == null) {
             cursor += durTicks;
             continue;
           }
@@ -223,9 +220,11 @@
           const startTick = isChord ? cursor - durTicks : cursor;
           const endTick = isChord ? startTick + durTicks : startTick + durTicks;
 
-          const vel = Math.round(64 + 60 * (midi - 60) / 60);  // crude velocity variation
-          events.push({ timeTicks: startTick, type: 'on', note: midi, vel, tempoBPM });
-          events.push({ timeTicks: endTick, type: 'off', note: midi, vel, tempoBPM });
+          // Crude velocity variation based on pitch — but normalize against
+          // cents (C4 = 6000), not MIDI (C4 = 60). 100 cents = 1 semitone.
+          const vel = Math.round(64 + 60 * (cents - 6000) / 6000);
+          events.push({ timeTicks: startTick, type: 'on', note: cents, vel, tempoBPM });
+          events.push({ timeTicks: endTick, type: 'off', note: cents, vel, tempoBPM });
 
           if (!isChord) cursor += durTicks;
         }
@@ -315,7 +314,7 @@
     return { graph, stats, events, ticksPerQuarter, parts, measures };
   }
 
-  const api = { parseMusicXml, analyzeMusicXml, pitchToMidi };
+  const api = { parseMusicXml, analyzeMusicXml, pitchToCents };
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
   }
