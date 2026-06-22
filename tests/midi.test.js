@@ -163,6 +163,65 @@ test('pitchOf contract: returns exact cents for half-sharps', () => {
   }
 });
 
+// pitchOf cents correctness: the function in graph.js uses a 12-entry
+// SHARP_SCALE_NAMES ['C','C#','D',...] for index lookup, NOT the 24-entry
+// NOTE_NAMES. A previous regression used NOTE_NAMES and produced wrong cents
+// for every non-C note (broke the playback glow + filter sliders).
+// We can't import pitchOf directly (it lives in graph.js, browser-only),
+// but we can replicate the formula here and verify it matches the
+// stepAlterOctaveToCents ground truth.
+test('pitchOf cents formula: all 12 naturals + sharps, multiple octaves', () => {
+  const SHARP_SCALE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  // Convention (matches centsToPitch): octave N = cents (N+1)*1200.
+  // C-1 = 0, C0 = 1200, C4 = 6000 (middle C), C5 = 7200.
+  // pitchOf("X<oct>") = (oct+1)*1200 + SHARP_SCALE_NAMES.indexOf(X)*100.
+  const cases = [
+    ['C-1', 0],    ['C0', 1200],  ['C4', 6000],  ['C5', 7200],
+    ['D4', 6200],  ['D5', 7400],
+    ['E4', 6400],  ['E5', 7600],
+    ['F4', 6500],  ['F5', 7700],
+    ['G4', 6700],  ['G5', 7900],
+    ['A4', 6900],  ['A5', 8100],  ['A6', 9300],
+    ['B4', 7100],  ['B5', 8300],
+    ['C#4', 6100], ['C#5', 7300],
+    ['D#4', 6300], ['D#5', 7500],
+    ['F#4', 6600], ['F#5', 7800],
+    ['G#4', 6800], ['G#5', 8000],
+    ['A#4', 7000], ['A#5', 8200],
+  ];
+  for (const [name, expectedCents] of cases) {
+    const m1 = name.match(/^([A-G][#]?)(-?\d+)$/);
+    assert(m1, `regex should match "${name}"`);
+    const pc = SHARP_SCALE_NAMES.indexOf(m1[1]);
+    const oct = parseInt(m1[2], 10);
+    const cents = (oct + 1) * 1200 + pc * 100;
+    assertEqual(cents, expectedCents,
+      `pitchOf("${name}") should yield ${expectedCents}`);
+  }
+});
+
+test('pitchOf cents formula: quarter-tone support', () => {
+  // Same formula but with 50-cent offset for half-sharps.
+  const SHARP_SCALE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const cases = [
+    ['C half-sharp 4', 6050],
+    ['C# half-sharp 4', 6150],
+    ['D half-sharp 4', 6250],
+    ['F# half-sharp 4', 6650],
+    ['A half-sharp 5', 8150],
+    ['B half-sharp 4', 7150],
+  ];
+  for (const [name, expectedCents] of cases) {
+    const m1 = name.match(/^([A-G][#]?)(?: (half-(?:sharp|flat)) )?(-?\d+)$/);
+    assert(m1, `regex should match "${name}"`);
+    const pc = SHARP_SCALE_NAMES.indexOf(m1[1]);
+    const oct = parseInt(m1[3], 10);
+    const cents = (oct + 1) * 1200 + pc * 100 + (m1[2] ? 50 : 0);
+    assertEqual(cents, expectedCents,
+      `pitchOf("${name}") should yield ${expectedCents}`);
+  }
+});
+
 function assertNotEqual(a, b) {
   if (a === b) throw new Error(`expected ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
 }

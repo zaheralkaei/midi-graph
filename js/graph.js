@@ -32,6 +32,14 @@
     return (name) => colors[name] || '#00e5ff';
   })();
 
+  // 12-entry sharp-spelling scale. NOTE: do NOT use M.NOTE_NAMES (which is the
+  // 24-entry QUARTER_TONE_NAMES) for index lookups in pitchOf() — the indexes
+  // don't line up. The quarter-tone "A" is at index 18 in the 24-entry scale
+  // but at index 9 in the 12-entry scale; mixing them produced wrong cents
+  // for every non-C note (broke the playback glow and the pitch-range filter
+  // sliders).
+  const SHARP_SCALE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
   // Parse a pitch-id like "F#5" or "C half-sharp 5" back to cents above C0.
   // Supports "half-sharp" (alter=+0.5) and "half-flat" (alter=-0.5) notations.
   // Both spellings are accepted even though QUARTER_TONE_NAMES currently only
@@ -49,7 +57,7 @@
     if (id == null) return 6000;
     const m = id.match(/^([A-G][#]?)(?: (half-(?:sharp|flat)) )?(-?\d+)$/);
     if (!m) return 6000;
-    const pc = M.NOTE_NAMES.indexOf(m[1]);
+    const pc = SHARP_SCALE_NAMES.indexOf(m[1]);
     if (pc < 0) return 6000;
     const octave = parseInt(m[3], 10);
     // half-flat of step X = 50 cents BELOW the natural of step X, which is
