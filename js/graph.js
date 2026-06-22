@@ -78,6 +78,32 @@
       .attr('viewBox', null);
     const g = svg.append('g');
 
+    // SVG <defs> with arrow markers for directed edges. Two markers exist:
+    // - 'arrow' (default gray) for unhovered edges
+    // - 'arrow-hover' (white) for the currently-hovered edge
+    //
+    // The marker is oriented automatically along the path tangent, and refX
+    // is the point on the marker that anchors to the path endpoint.
+    // markerUnits='userSpaceOnUse' makes the arrow the same size regardless
+    // of stroke thickness (default 'strokeWidth' would scale with edge width).
+    function makeArrow(id, fill) {
+      svg.select('defs').append('marker')
+        .attr('id', id)
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', 9)         // tip of arrow
+        .attr('refY', 0)
+        .attr('markerWidth', 8)
+        .attr('markerHeight', 8)
+        .attr('orient', 'auto')
+        .attr('markerUnits', 'userSpaceOnUse')
+        .append('path')
+        .attr('d', 'M0,-4 L9,0 L0,4 z')
+        .attr('fill', fill);
+    }
+    svg.append('defs');
+    makeArrow('arrow', '#666');
+    makeArrow('arrow-hover', '#fff');
+
     const zoom = d3.zoom()
       .scaleExtent([0.3, 8])
       .on('zoom', e => g.attr('transform', e.transform));
@@ -185,16 +211,19 @@
         .merge(labelSel)
         .text(d => d.id);
 
-      // Edge hover: highlight the edge + show its label briefly.
+      // Edge hover: highlight the edge + swap to the white arrow marker +
+      // show its label briefly.
       linkAll
         .on('mouseenter', function(ev, d) {
-          d3.select(this).attr('stroke', '#fff').attr('stroke-opacity', 1);
+          d3.select(this).attr('stroke', '#fff').attr('stroke-opacity', 1)
+            .attr('marker-end', 'url(#arrow-hover)');
           const id = d.source + '->' + d.target;
           linkLabelGroup.selectAll('text').filter(td => td.source + '->' + td.target === id)
             .classed('visible', true);
         })
         .on('mouseleave', function(ev, d) {
-          d3.select(this).attr('stroke', '#666').attr('stroke-opacity', 0.55);
+          d3.select(this).attr('stroke', '#666').attr('stroke-opacity', 0.55)
+            .attr('marker-end', 'url(#arrow)');
           const id = d.source + '->' + d.target;
           linkLabelGroup.selectAll('text').filter(td => td.source + '->' + td.target === id)
             .classed('visible', false);
@@ -209,20 +238,41 @@
         const thicknessOn = document.getElementById('edge-thickness-by-prob').checked;
         const { w, h } = getSize();
         simulation.force('center').x(w / 2).y(h / 2);
+        // Node radius (must match the .attr('r', 18) on enter() below).
+        const NODE_R = 18;
+        // Shrink edges by this much past the node circumference so the arrow
+        // head doesn't overlap the target node. The marker is anchored at
+        // refX=9 and the arrow tip extends a few more units, so we shrink by
+        // NODE_R + 4 to keep the tip just outside the node circle.
+        const ARROW_GAP = NODE_R + 4;
         linkAll
           .attr('d', d => {
             if (d.source === d.target) {
+              // Self-loop: small arc above the node. The arc starts at
+              // (x-8, y-8), goes up and around, ends at (x+8, y-8). The
+              // marker is drawn at the arc end, oriented along the tangent.
               const x = d.source.x, y = d.source.y;
               return `M${x-8},${y-8} A14,14 0 1,1 ${x+8},${y-8}`;
             }
+            // Shorten the path so it stops just outside the target node.
+            // Vector from source to target, normalize, multiply by gap.
             const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
-            const dr = Math.sqrt(dx*dx + dy*dy);
-            return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len < 1) return '';  // nodes overlap, skip
+            const ux = dx / len, uy = dy / len;
+            const endX = d.target.x - ux * ARROW_GAP;
+            const endY = d.target.y - uy * ARROW_GAP;
+            // Use a quadratic curve that bows out a bit so the arrow is
+            // clearly inside the line, not on top of it.
+            const midX = (d.source.x + endX) / 2 + uy * 15;
+            const midY = (d.source.y + endY) / 2 - ux * 15;
+            return `M${d.source.x},${d.source.y} Q${midX},${midY} ${endX},${endY}`;
           })
           .attr('stroke', '#666')
           .attr('stroke-opacity', 0.55)
           .attr('fill', 'none')
-          .attr('stroke-width', d => thicknessOn ? 0.5 + d.value * 5 : 1.5);
+          .attr('stroke-width', d => thicknessOn ? 0.5 + d.value * 5 : 1.5)
+          .attr('marker-end', 'url(#arrow)');
 
         selfLoopLabelGroup.selectAll('text')
           .attr('x', d => d.source.x)
