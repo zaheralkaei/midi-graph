@@ -24,6 +24,13 @@
   let isPlaying = false;
 
   function resetState() {
+    // Stop playback FIRST so its onNoteOff callbacks don't fire on a graph
+    // we're about to destroy. (The callback closure captures the graph
+    // controller reference, so destroying the graph mid-stop would throw.)
+    if (currentPlayback) {
+      currentPlayback.stop();
+      currentPlayback = null;
+    }
     if (currentGraphController) {
       currentGraphController.destroy();
       currentGraphController = null;
@@ -35,10 +42,6 @@
     playBtn.disabled = true;
     stopBtn.disabled = true;
     isPlaying = false;
-    if (currentPlayback) {
-      currentPlayback.stop();
-      currentPlayback = null;
-    }
   }
 
   function renderStats(stats) {
@@ -112,9 +115,11 @@
     graphPanel.classList.remove('hidden');
 
     // Wire playback callbacks so the graph glows when each pitch is sounding.
+    // Guard against the controller being null in case the graph was torn down
+    // (e.g. during resetState) before the callback fires.
     currentPlayback = M.buildPlayback(result.events, result.ticksPerQuarter, {
-      onNoteOn: (cents) => currentGraphController.setActive(cents, true),
-      onNoteOff: (cents) => currentGraphController.setActive(cents, false),
+      onNoteOn: (cents) => currentGraphController && currentGraphController.setActive(cents, true),
+      onNoteOff: (cents) => currentGraphController && currentGraphController.setActive(cents, false),
     });
     playBtn.disabled = false;
     stopBtn.disabled = true;
