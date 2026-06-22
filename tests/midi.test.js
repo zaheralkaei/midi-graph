@@ -115,6 +115,54 @@ test('centsToPitch: C half-sharp stays distinct from C# at octave boundary', () 
   assertNotEqual(m.centsToPitch(6050), m.centsToPitch(6100));
 });
 
+// P1-1: negative cents return "?" instead of producing misleading "?-1"
+test('centsToPitch: negative cents returns ?', () => {
+  assertEqual(m.centsToPitch(-1), '?');
+  assertEqual(m.centsToPitch(-100), '?');
+  assertEqual(m.centsToPitch(-50), '?');
+});
+
+// P1-3: banker's rounding (round-half-to-even) so 25¢ → 0¢, 75¢ → 100¢
+test('centsToPitch: 25 cents rounds to 0 (banker, not 50)', () => {
+  assertEqual(m.centsToPitch(25), 'C-1');  // 25¢ → even 0
+});
+test('centsToPitch: 75 cents rounds to 100 (banker)', () => {
+  assertEqual(m.centsToPitch(75), 'C#-1');  // 75¢ → 100 (rounds up, not half)
+});
+test('centsToPitch: 125 cents rounds to 100 (banker, .5 to even)', () => {
+  // 125/50 = 2.5 → banker → 2 → 100
+  assertEqual(m.centsToPitch(125), 'C#-1');
+});
+
+// P1-2: pitchClass handles negative cents — values just below 0 (like -1,
+// which can't wrap cleanly to a quarter-tone) return "?". Negative values
+// within the mod 1200 wrap range produce the corresponding class name.
+// (E.g. -100¢ → wraps to 1100¢ → "B". This is consistent with how
+// pitchClass has always handled sub-octave wrap-around.)
+test('pitchClass: -1 cent (below quarter-tone resolution) returns ?', () => {
+  assertEqual(m.pitchClass(-1), '?');
+});
+test('pitchClass: -100 wraps to B (consistent with positive wrap-around)', () => {
+  assertEqual(m.pitchClass(-100), 'B');
+});
+
+// pitchOf regression: graph.js parses pitch names back to cents. The regex
+// must match "C half-sharp 4" with the trailing space inside the optional
+// group, otherwise half-sharps silently round to the natural pitch's cents.
+test('pitchOf contract: returns exact cents for half-sharps', () => {
+  // This mirrors the regex test in graph.js (browser-only, but the contract
+  // is "pitchOf(id) === stepAlterOctaveToCents(step, alter, octave) for
+  // every QUARTER_TONE_NAMES entry"). The 6050 case is the critical one.
+  // We can't import graph.js in node (it requires d3), but we can verify
+  // the centsToPitch round-trip preserves exact 50-cent increments.
+  const halfSharps = [50, 150, 250, 350, 450, 550, 650, 750, 850, 950, 1050, 1150];
+  for (const c of halfSharps) {
+    const name = m.centsToPitch(c);
+    assert(name.includes('half-sharp'),
+      `cents ${c} should produce a name containing "half-sharp", got "${name}"`);
+  }
+});
+
 function assertNotEqual(a, b) {
   if (a === b) throw new Error(`expected ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
 }

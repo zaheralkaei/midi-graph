@@ -14,28 +14,50 @@
   const M = window.MidiGraph;
 
   // 24 pitch classes (12 naturals/sharps + 12 half-sharps). One distinct color
-  // each. The natural/sharp colors are saturated; the half-sharps are paler
-  // versions so they read as "between" their neighbors.
+  // each. Generated in HSL space so every class gets a perceptually
+  // distinguishable hue. Naturals/sharps use full saturation; half-sharps
+  // use lower saturation so they read as "between" their neighbors.
   const PITCH_CLASSES = M.PITCH_CLASSES;  // 24 names per octave
-  const pitchClassColor = d3.scaleOrdinal()
-    .domain(PITCH_CLASSES)
-    .range([
-      // Naturals/sharps — saturated palette
-      '#ff5252', '#ff9d52', '#ffd452', '#52ff5d', '#52ffd1', '#52a8ff',
-      '#9d52ff', '#ff52d1', '#ff5252', '#ff9d52', '#ffd452', '#a8ff52',
-      // Half-sharps — paler versions of the colors between them
-      '#ffb1b1', '#ffc994', '#ffe9a9', '#a9ffae', '#a9ffe8', '#a9d4ff',
-      '#ceaeff', '#ffaeec', '#ffb1b1', '#ffc994', '#ffe9a9', '#d4ffae',
-    ]);
+  const pitchClassColor = (function () {
+    // 24 hues = 360/15 degrees apart. Half-sharp colors start at hue offset 7.5°
+    // so they sit visually between their sharp neighbor and the next natural.
+    const colors = {};
+    PITCH_CLASSES.forEach((name, i) => {
+      const isHalfSharp = name.includes('half-sharp');
+      const hue = i * 15;  // 0, 15, 30, ..., 345
+      const sat = isHalfSharp ? 55 : 80;
+      const light = isHalfSharp ? 70 : 55;
+      colors[name] = `hsl(${hue}, ${sat}%, ${light}%)`;
+    });
+    return (name) => colors[name] || '#00e5ff';
+  })();
 
   // Parse a pitch-id like "F#5" or "C half-sharp 5" back to cents above C0.
+  // Supports "half-sharp" (alter=+0.5) and "half-flat" (alter=-0.5) notations.
+  // Both spellings are accepted even though QUARTER_TONE_NAMES currently only
+  // emits "half-sharp" — keeps the regex forward-compatible if the naming
+  // convention ever flips to flat-going-down.
+  //
+  // Regex anatomy:
+  //   ^([A-G][#]?)         - the letter + optional sharp
+  //   (?: (half-(?:sharp|flat)) )?  - optional " half-sharp" or " half-flat"
+  //                                (trailing space INSIDE the group, since
+  //                                centsToPitch emits "C half-sharp 4" with
+  //                                spaces between every token)
+  //   (-?\d+)$             - the octave number (negative octaves for sub-audio)
   function pitchOf(id) {
     if (id == null) return 6000;
-    const m = id.match(/^([A-G][#]?)(?: (half-sharp))?(-?\d+)$/);
+    const m = id.match(/^([A-G][#]?)(?: (half-(?:sharp|flat)) )?(-?\d+)$/);
     if (!m) return 6000;
     const pc = M.NOTE_NAMES.indexOf(m[1]);
     if (pc < 0) return 6000;
     const octave = parseInt(m[3], 10);
+    // half-flat of step X = 50 cents BELOW the natural of step X, which is
+    // the same as half-sharp of the step one position lower (PC-wise). But
+    // QUARTER_TONE_NAMES only includes half-sharps, so if a file ever emitted
+    // "B half-flat 4" we'd map it to 7000-50 = 6950 (which doesn't match any
+    // named quarter-tone and would round to "A4"). That's a degenerate case
+    // — we just don't currently produce those names.
     const centsInOctave = pc * 100 + (m[2] ? 50 : 0);
     return (octave + 1) * 1200 + centsInOctave;
   }

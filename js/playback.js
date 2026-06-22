@@ -54,6 +54,10 @@
     let scheduledTimers = [];
     let playEndedTimer = null;
     let stopped = false;
+    // Tracks which cents are currently sounding (have had their onNoteOn
+    // callback fire but not yet their onNoteOff). Used by stop() to fire
+    // onNoteOff exactly once per active pitch, avoiding over-decrement.
+    let currentlyActive = new Set();
 
     function scheduleNote(n, startWallClock) {
       const cents = n.cents;
@@ -65,6 +69,7 @@
       const attackId = Tone.Draw.schedule(() => {
         if (stopped) return;
         synth.triggerAttack(freq, attackTime);
+        currentlyActive.add(cents);
         onNoteOn(cents);
       }, attackTime);
 
@@ -72,7 +77,10 @@
       const releaseId = Tone.Draw.schedule(() => {
         if (stopped) return;
         synth.triggerRelease(freq, releaseTime);
-        onNoteOff(cents);
+        if (currentlyActive.has(cents)) {
+          currentlyActive.delete(cents);
+          onNoteOff(cents);
+        }
       }, releaseTime);
 
       scheduledTimers.push(attackId, releaseId);
@@ -81,6 +89,13 @@
     function play() {
       return new Promise((resolve) => {
         if (!notes.length || stopped) {
+          resolve(0);
+          return;
+        }
+        // Guard against double-play: if there are still scheduled timers, a
+        // previous play() is in flight. Bail out (the outer app.js already
+        // disables the Play button, but Tone.start() is async and can race).
+        if (scheduledTimers.length > 0) {
           resolve(0);
           return;
         }
@@ -95,7 +110,10 @@
                          notes[notes.length - 1].durSec + 0.5;
         playEndedTimer = setTimeout(() => {
           // Make sure the last note's off callback fires if Draw missed it.
-          if (!stopped) onNoteOff(notes[notes.length - 1].cents);
+          if (!stopped && currentlyActive.has(notes[notes.length - 1].cents)) {
+            currentlyActive.delete(notes[notes.length - 1].cents);
+            onNoteOff(notes[notes.length - 1].cents);
+          }
           resolve(totalSec);
         }, totalSec * 1000);
       });
@@ -114,10 +132,14 @@
       }
       // Kill any currently-sounding voices.
       synth.releaseAll();
-      // Tell the graph to drop the glow on every active note.
-      for (const n of notes) {
-        onNoteOff(n.cents);
+      // Fire onNoteOff exactly once per currently-active pitch. This avoids
+      // the over-decrement bug where calling onNoteOff for every scheduled
+      // note (including ones that already released normally) would decrement
+      // the graph's activeCount past zero.
+      for (const cents of currentlyActive) {
+        onNoteOff(cents);
       }
+      currentlyActive.clear();
     }
 
     return { play, stop, noteCount: notes.length };

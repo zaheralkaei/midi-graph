@@ -78,6 +78,13 @@ const QUARTER_TONE_NAMES = [
 // step+alter+octave → cents above C0. alter is in semitones (0, 0.5, 1, 1.5, ...).
 // Negative alter is also supported (e.g. alter=-0.5 = quarter-flat of the
 // note above; same as half-sharp of the note below).
+//
+// Eighth-tone precision: stepAlterOctaveToCents accepts alter=0.25 / 0.75 and
+// produces exact cents (25, 75). However, centsToPitch rounds to the nearest
+// quarter-tone (50 cents) for display purposes — eighth-tones appear as their
+// nearest quarter-tone. If you need exact eighth-tone display, the naming layer
+// needs a 48-entry table; for now quarter-tone is the highest resolution the
+// rest of the pipeline supports.
 function stepAlterOctaveToCents(step, alter, octave) {
   const base = SHARP_CENTS_FROM_C[step];
   if (base === undefined) return null;
@@ -88,34 +95,57 @@ function stepAlterOctaveToCents(step, alter, octave) {
   return (octave + 1) * 1200 + base + Math.round(a * 100);
 }
 
-// cents → display name like "C4" or "C# half-sharp 4".
-function centsToPitch(cents) {
-  if (cents == null || !isFinite(cents)) return '?';
-  const octave = Math.floor(cents / 1200) - 1;
-  const withinOctave = cents - (octave + 1) * 1200;
-  // Round to nearest 50 cents. Quarter-tones are exact at multiples of 50;
-  // anything else (e.g. 25-cent eighth-tones from non-standard alters) rounds
-  // to the nearest quarter-tone. This is intentional — we name by cents-to-nearest-50.
-  const rounded = Math.round(withinOctave / 50) * 50;
-  const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
-  if (match) {
-    // Insert a space between name and octave when the name itself contains
-    // a space (e.g. "C half-sharp" + 4 → "C half-sharp 4"). Plain names
-    // ("C", "C#") stay concatenated as before ("C4", "C#4").
-    const sep = match.name.includes(' ') ? ' ' : '';
-    return match.name + sep + octave;
+// Round to nearest 50 cents using banker's rounding (round-half-to-even).
+  // JavaScript's Math.round rounds .5 toward +infinity (asymmetric) — e.g. 25¢
+  // rounds UP to 50¢ ("C half-sharp"), but -25¢ rounds toward zero to 0¢
+  // ("B half-sharp of the octave below"). With banker's rounding, 25¢ rounds
+  // to the even multiple (0¢), matching the -25¢ case. Quarter-tones are exact
+  // at multiples of 50; anything else (e.g. 25-cent eighth-tones from
+  // non-standard alters) rounds to the nearest quarter-tone. This is
+  // intentional — we name by cents-to-nearest-50.
+  function roundToNearest50(c) {
+    // Banker's rounding: divide, round to nearest integer (with halves to even),
+    // scale back. Math.round(0.5) = 1 in JS, but Math.round(-0.5) = 0, so to
+    // get half-to-even we explicitly handle the .5 case.
+    const divided = c / 50;
+    const floor = Math.floor(divided);
+    const diff = divided - floor;
+    if (Math.abs(diff - 0.5) < 1e-9) {
+      // Exactly on .5 — round to even.
+      const floorIsEven = Math.abs(floor % 2) < 1e-9;
+      return (floorIsEven ? floor : floor + 1) * 50;
+    }
+    return Math.round(divided) * 50;
   }
-  return `?${cents}`;
-}
 
-// cents → just the pitch-class part (no octave). Used for the 24-class color scale.
-function pitchClass(cents) {
-  if (cents == null || !isFinite(cents)) return '?';
-  const withinOctave = ((cents % 1200) + 1200) % 1200;  // handle negative
-  const rounded = Math.round(withinOctave / 50) * 50;
-  const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
-  return match ? match.name : '?';
-}
+  // cents → display name like "C4" or "C# half-sharp 4".
+  function centsToPitch(cents) {
+    if (cents == null || !isFinite(cents)) return '?';
+    if (cents < 0) return '?';  // negative cents are unreachable through any
+                                // current parser; return a marker instead of
+                                // producing a misleading name like "?-2".
+    const octave = Math.floor(cents / 1200) - 1;
+    const withinOctave = cents - (octave + 1) * 1200;
+    const rounded = roundToNearest50(withinOctave);
+    const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
+    if (match) {
+      // Insert a space between name and octave when the name itself contains
+      // a space (e.g. "C half-sharp" + 4 → "C half-sharp 4"). Plain names
+      // ("C", "C#") stay concatenated as before ("C4", "C#4").
+      const sep = match.name.includes(' ') ? ' ' : '';
+      return match.name + sep + octave;
+    }
+    return `?${cents}`;
+  }
+
+  // cents → just the pitch-class part (no octave). Used for the 24-class color scale.
+  function pitchClass(cents) {
+    if (cents == null || !isFinite(cents)) return '?';
+    const withinOctave = ((cents % 1200) + 1200) % 1200;  // handle negatives
+    const rounded = roundToNearest50(withinOctave);
+    const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
+    return match ? match.name : '?';
+  }
 
 // Quarter-tone class names used by the graph color scale. Includes all 24
 // possible pitch classes within an octave.

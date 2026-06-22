@@ -5,11 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to=no">
   <title>midi-graph</title>
 
-  <!-- D3 v7 for the force-directed graph. -->
-  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <!-- D3 v7 for the force-directed graph. Bundled locally with jsdelivr fallback. -->
+  <script src="vendor/d3.v7.min.js"
+          onerror="this.onerror=null;this.src='https://d3js.org/d3.v7.min.js';"></script>
 
-  <!-- Tone.js for actual MIDI playback. -->
-  <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.min.js"></script>
+  <!-- Tone.js for actual MIDI playback. Bundled locally with jsdelivr fallback. -->
+  <script src="vendor/Tone.min.js"
+          onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.min.js';"></script>
 
   <!-- OSMD (OpenSheetMusicDisplay) — bundled locally at vendor/opensheetmusicdisplay.min.js
        with jsdelivr as a fallback. Renders real SVG sheet music in the browser. -->
@@ -32,6 +34,10 @@
       <button type="button" id="load-demo-quartertones">Load demo (quarter-tones, .musicxml)</button>
       <span id="filename-display" class="filename-display"></span>
     </div>
+    <!-- Visible error region. Hidden by default; populated on parse failure
+         so users see the error near the upload control, not in the far-away
+         playback info line. -->
+    <div id="error-display" class="error-display hidden" role="alert"></div>
   </div>
 
   <!-- Stats panel — hidden until something is loaded. -->

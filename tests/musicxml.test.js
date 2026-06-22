@@ -239,6 +239,76 @@ test('analyzeMusicXml: pitch range includes "semitones" word for fractional span
     `expected "C half-sharp 4" with space, got: ${r.stats.pitch_range}`);
 });
 
+// ---------------------------------------------------------------------------
+// Multi-tempo (P0-1): tempo changes between measures, in the middle of a
+// measure, and at the start of a measure must all be reflected on the
+// events that follow them.
+// ---------------------------------------------------------------------------
+function buildMultiTempoXml(opts) {
+  // opts: { measure1Tempo, measure2Tempo, midMeasureTempo (optional) }
+  const m1 = opts.measure1Tempo || 120;
+  const m2 = opts.measure2Tempo || 120;
+  const mid = opts.midMeasureTempo;
+  const dir2 = m2 !== m1 ? `
+      <direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${m2}</per-minute></metronome></direction-type><sound tempo="${m2}"/></direction>` : '';
+  const midBlock = mid != null ? `
+      <direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${mid}</per-minute></metronome></direction-type><sound tempo="${mid}"/></direction>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>480</duration><type>quarter</type></note>` : '';
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>480</divisions></attributes>
+      <direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${m1}</per-minute></metronome></direction-type><sound tempo="${m1}"/></direction>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>480</duration><type>quarter</type></note>${midBlock}
+    </measure>
+    <measure number="2">${dir2}
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>480</duration><type>quarter</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+}
+
+test('parseMusicXml: tempo at start of measure 1 applies to measure 1 notes', () => {
+  const r = xml.parseMusicXml(buildMultiTempoXml({ measure1Tempo: 90, measure2Tempo: 120 }));
+  const c4on = r.events.find(e => e.type === 'on' && e.note === 6000);
+  assertEqual(c4on.tempoBPM, 90);
+});
+
+test('parseMusicXml: tempo at start of measure 2 applies to measure 2 notes (not measure 1)', () => {
+  const r = xml.parseMusicXml(buildMultiTempoXml({ measure1Tempo: 120, measure2Tempo: 60 }));
+  const c4on = r.events.find(e => e.type === 'on' && e.note === 6000);
+  const e4on = r.events.find(e => e.type === 'on' && e.note === 6400);
+  assertEqual(c4on.tempoBPM, 120);
+  assertEqual(e4on.tempoBPM, 60);
+});
+
+test('parseMusicXml: tempo change IN MIDDLE of a measure applies to subsequent notes only', () => {
+  // C4 should be 120, D4 (after the mid-measure direction) should be 60.
+  const r = xml.parseMusicXml(buildMultiTempoXml({ measure1Tempo: 120, midMeasureTempo: 60 }));
+  const c4on = r.events.find(e => e.type === 'on' && e.note === 6000);
+  const d4on = r.events.find(e => e.type === 'on' && e.note === 6200);
+  assertEqual(c4on.tempoBPM, 120);
+  assertEqual(d4on.tempoBPM, 60);
+});
+
+test('parseMusicXml: timing math across tempo change is correct', () => {
+  // Measure 1: C4 at 120 BPM for 1 quarter = 0.5s.
+  // Measure 2: tempo change to 60 BPM, E4 for 1 quarter = 1.0s.
+  // Total wall-clock = 0.5 + 1.0 = 1.5s.
+  const r = xml.parseMusicXml(buildMultiTempoXml({ measure1Tempo: 120, measure2Tempo: 60 }));
+  const tickToSec = M.ticksToSecondsSegments(r.events, r.ticksPerQuarter);
+  // E4 on is at tick 480 (end of measure 1 / start of measure 2)
+  const e4on = r.events.find(e => e.type === 'on' && e.note === 6400);
+  assert(Math.abs(tickToSec(e4on.timeTicks) - 0.5) < 1e-9,
+    `E4 should be at 0.5s, got ${tickToSec(e4on.timeTicks)}`);
+  // E4 off is at tick 960, which is 480 ticks into the 60-BPM segment = +1.0s
+  const e4off = r.events.find(e => e.type === 'off' && e.note === 6400);
+  assert(Math.abs(tickToSec(e4off.timeTicks) - 1.5) < 1e-9,
+    `E4 off should be at 1.5s, got ${tickToSec(e4off.timeTicks)}`);
+});
+
 console.log('-----------------');
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

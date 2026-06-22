@@ -135,11 +135,15 @@
 
     // Default divisions per quarter (most files override in the first measure).
     let ticksPerQuarter = 480;
-    let tempoBPM = 120;
-    let microsPerQuarter = 500000;
+    const defaultTempoBPM = 120;
 
     const events = [];
     const measures = [];
+    // Collect tempo-change points during parsing, then stamp each event in a
+    // separate sweep. Format: sorted array of { tick, bpm } by tick ascending.
+    // The first entry is the initial tempo at tick 0; subsequent entries
+    // represent changes that take effect at that tick.
+    const tempoChanges = [{ tick: 0, bpm: defaultTempoBPM }];
 
     // Walk each part.
     for (const partEl of partEls) {
@@ -155,100 +159,100 @@
           if (div != null) ticksPerQuarter = div;
         }
 
-        // Timewise flattened partwise still has nested <part><measure> — guard
-        // against measuring tick via the part cursor (see below).
         measures.push({ number: measureNumber, startTick: measureStartTick, partId: partEl.getAttribute('id') });
 
-        // Walk <note> children in document order. We use a per-measure cursor
-        // because <backup>/<forward> move it.
+        // Walk <note> AND <direction> children in document order. This is the
+        // fix for P0-3: directions can appear before, between, or after notes
+        // within a measure, and the tempo they declare must apply to all notes
+        // at or after their tick. We maintain a per-measure cursor that
+        // <backup>/<forward> move; <direction> does NOT advance the cursor.
         let cursor = measureStartTick;
-        const noteEls = Array.from(measureEl.getElementsByTagName('note'));
-        for (const noteEl of noteEls) {
-          // <backup> moves the cursor backward; <forward> moves it forward.
-          if (hasChild(noteEl, 'backup')) {
-            const dur = childFloat(noteEl, 'duration', 0);
-            cursor -= durationToTicks(ticksPerQuarter, dur);
-            continue;
-          }
-          if (hasChild(noteEl, 'forward')) {
-            const dur = childFloat(noteEl, 'duration', 0);
-            cursor += durationToTicks(ticksPerQuarter, dur);
-            continue;
-          }
-
-          // Tempo from <direction> siblings? Handle inside the loop only if
-          // the note's previous sibling is a direction. Simpler: collect
-          // tempos from the whole measure at the start (below).
-
-          const isChord = hasChild(noteEl, 'chord');
-          const isRest = hasChild(noteEl, 'rest');
-          const durDivisions = childFloat(noteEl, 'duration', ticksPerQuarter);
-          const durTicks = durationToTicks(ticksPerQuarter, durDivisions);
-
-          if (isRest) {
-            cursor += durTicks;
-            continue;
-          }
-
-          const pitchEl = noteEl.getElementsByTagName('pitch')[0];
-          if (!pitchEl) {
-            // Grace notes or other no-pitch — skip but advance cursor.
-            cursor += durTicks;
-            continue;
-          }
-          const step = childText(pitchEl, 'step');
-          const alter = childFloat(pitchEl, 'alter', 0);
-          const octave = parseInt(childText(pitchEl, 'octave'), 10);
-          if (!step || isNaN(octave)) {
-            cursor += durTicks;
-            continue;
-          }
-
-          const cents = pitchToCents(step, alter, octave);
-          if (cents == null) {
-            cursor += durTicks;
-            continue;
-          }
-
-          // Chord: simultaneous with the previous note, so same on-time but
-          // separate off-time? In MusicXML, chord notes share the previous
-          // note's duration. We just emit on/off for the chord note at the
-          // previous note's start, with the same duration. The transition
-          // graph ignores simultaneous notes by construction (transitions are
-          // sequential, not parallel), so chord notes contribute zero to the
-          // graph unless they're sequential.
-          const startTick = isChord ? cursor - durTicks : cursor;
-          const endTick = isChord ? startTick + durTicks : startTick + durTicks;
-
-          // Crude velocity variation based on pitch — but normalize against
-          // cents (C4 = 6000), not MIDI (C4 = 60). 100 cents = 1 semitone.
-          const vel = Math.round(64 + 60 * (cents - 6000) / 6000);
-          events.push({ timeTicks: startTick, type: 'on', note: cents, vel, tempoBPM });
-          events.push({ timeTicks: endTick, type: 'off', note: cents, vel, tempoBPM });
-
-          if (!isChord) cursor += durTicks;
-        }
-
-        // Collect tempo changes from this measure's <direction> elements.
-        const directionEls = Array.from(measureEl.getElementsByTagName('direction'));
-        for (const dir of directionEls) {
-          const soundEl = dir.getElementsByTagName('sound')[0];
-          if (soundEl && soundEl.getAttribute('tempo')) {
-            const bpm = parseFloat(soundEl.getAttribute('tempo'));
-            if (!isNaN(bpm)) {
-              tempoBPM = bpm;
-              microsPerQuarter = Math.round(60_000_000 / bpm);
+        const children = Array.from(measureEl.children);
+        for (const child of children) {
+          const tag = child.tagName;
+          if (tag === 'note') {
+            const noteEl = child;
+            // <backup> moves the cursor backward; <forward> moves it forward.
+            if (hasChild(noteEl, 'backup')) {
+              const dur = childFloat(noteEl, 'duration', 0);
+              cursor -= durationToTicks(ticksPerQuarter, dur);
+              continue;
             }
-          }
-          const metroEl = dir.getElementsByTagName('metronome')[0];
-          if (metroEl) {
-            const perMin = metroEl.getElementsByTagName('per-minute')[0];
-            if (perMin) {
-              const bpm = parseFloat(perMin.textContent);
-              if (!isNaN(bpm)) {
-                tempoBPM = bpm;
-                microsPerQuarter = Math.round(60_000_000 / bpm);
+            if (hasChild(noteEl, 'forward')) {
+              const dur = childFloat(noteEl, 'duration', 0);
+              cursor += durationToTicks(ticksPerQuarter, dur);
+              continue;
+            }
+
+            const isChord = hasChild(noteEl, 'chord');
+            const isRest = hasChild(noteEl, 'rest');
+            const durDivisions = childFloat(noteEl, 'duration', ticksPerQuarter);
+            const durTicks = durationToTicks(ticksPerQuarter, durDivisions);
+
+            if (isRest) {
+              cursor += durTicks;
+              continue;
+            }
+
+            const pitchEl = noteEl.getElementsByTagName('pitch')[0];
+            if (!pitchEl) {
+              // Grace notes or other no-pitch — skip but advance cursor.
+              cursor += durTicks;
+              continue;
+            }
+            const step = childText(pitchEl, 'step');
+            const alter = childFloat(pitchEl, 'alter', 0);
+            const octave = parseInt(childText(pitchEl, 'octave'), 10);
+            if (!step || isNaN(octave)) {
+              cursor += durTicks;
+              continue;
+            }
+
+            const cents = pitchToCents(step, alter, octave);
+            if (cents == null) {
+              cursor += durTicks;
+              continue;
+            }
+
+            // Chord: simultaneous with the previous note. Emit at the same
+            // start tick, same duration. The transition graph ignores
+            // simultaneous notes by construction (transitions are sequential,
+            // not parallel), so chord notes contribute zero to the graph
+            // unless they're sequential.
+            const startTick = isChord ? cursor - durTicks : cursor;
+            const endTick = isChord ? startTick + durTicks : startTick + durTicks;
+
+            // Crude velocity variation based on pitch — normalize against
+            // cents (C4 = 6000), not MIDI. 100 cents = 1 semitone.
+            const vel = Math.round(64 + 60 * (cents - 6000) / 6000);
+            events.push({ timeTicks: startTick, type: 'on', note: cents, vel, tempoBPM: defaultTempoBPM });
+            events.push({ timeTicks: endTick, type: 'off', note: cents, vel, tempoBPM: defaultTempoBPM });
+
+            if (!isChord) cursor += durTicks;
+          } else if (tag === 'direction') {
+            // Extract tempo from <sound tempo="..."> or <metronome><per-minute>.
+            const soundEl = child.getElementsByTagName('sound')[0];
+            let dirBpm = null;
+            if (soundEl && soundEl.getAttribute('tempo')) {
+              const bpm = parseFloat(soundEl.getAttribute('tempo'));
+              if (!isNaN(bpm)) dirBpm = bpm;
+            }
+            if (dirBpm == null) {
+              const metroEl = child.getElementsByTagName('metronome')[0];
+              if (metroEl) {
+                const perMin = metroEl.getElementsByTagName('per-minute')[0];
+                if (perMin) {
+                  const bpm = parseFloat(perMin.textContent);
+                  if (!isNaN(bpm)) dirBpm = bpm;
+                }
               }
+            }
+            if (dirBpm != null) {
+              // The direction takes effect at the current cursor (the same
+              // tick as the next note or later within this measure). Using
+              // cursor matches MusicXML semantics: a direction in the middle
+              // of a measure applies from that point on.
+              tempoChanges.push({ tick: cursor, bpm: dirBpm });
             }
           }
         }
@@ -258,17 +262,32 @@
     // Sort events by timeTicks so playback can interleave correctly.
     events.sort((a, b) => a.timeTicks - b.timeTicks);
 
-    // Stamp each event with the current tempoBPM. For multi-tempo files this
-    // needs a sweep; for single-tempo it's a no-op.
-    let activeBPM = 120;
-    let activeMicros = 500000;
-    // Re-walk measure by measure to pick up tempo changes; for now assume
-    // single-tempo (set in the loop above) and stamp everything with it.
-    // (Multi-tempo refinement: walk events in order, recompute tempoBPM from
-    // the measure-by-measure scan. We have measure boundaries in `measures`,
-    // so a future pass can do this.)
+    // Sort tempo changes by tick and dedupe consecutive duplicates. Multiple
+    // parts may emit tempo changes at the same tick; collapse to one.
+    tempoChanges.sort((a, b) => a.tick - b.tick);
+    const dedupedTempos = [];
+    for (const tc of tempoChanges) {
+      const last = dedupedTempos[dedupedTempos.length - 1];
+      if (!last || last.tick !== tc.tick) {
+        dedupedTempos.push(tc);
+      } else {
+        // Same tick — keep the last declaration (later parts override earlier).
+        last.bpm = tc.bpm;
+      }
+    }
+
+    // Sweep: stamp each event with the tempo active at its tick. Walk events
+    // in tick order and the tempo-change list in lockstep. For each event,
+    // advance the tempoChange pointer until the next change is after the
+    // event's tick.
+    let tcIdx = 0;
+    let activeBpm = dedupedTempos.length ? dedupedTempos[0].bpm : defaultTempoBPM;
     for (const ev of events) {
-      ev.tempoBPM = tempoBPM;
+      while (tcIdx + 1 < dedupedTempos.length && dedupedTempos[tcIdx + 1].tick <= ev.timeTicks) {
+        tcIdx++;
+        activeBpm = dedupedTempos[tcIdx].bpm;
+      }
+      ev.tempoBPM = activeBpm;
     }
 
     return { events, ticksPerQuarter, parts, measures };

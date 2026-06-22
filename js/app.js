@@ -4,6 +4,39 @@
 (function () {
   const M = window.MidiGraph;
 
+  // Defensive guards: if a CDN fallback chain still failed (offline mode,
+  // broken corporate proxy, etc.), the page should fail with a useful
+  // message instead of throwing cryptic "Tone is not defined" errors.
+  // We disable the affected UI controls so clicks don't throw.
+  if (typeof Tone === 'undefined') {
+    document.body.insertAdjacentHTML('afterbegin',
+      '<div style="background:#ff5252;color:#fff;padding:12px;text-align:center;">' +
+      'Tone.js failed to load — audio playback is disabled. Check your network connection.</div>');
+    document.getElementById('play-btn').disabled = true;
+    document.getElementById('stop-btn').disabled = true;
+  }
+  if (typeof d3 === 'undefined') {
+    document.body.insertAdjacentHTML('afterbegin',
+      '<div style="background:#ff5252;color:#fff;padding:12px;text-align:center;">' +
+      'D3 v7 failed to load — the transition graph is disabled. Check your network connection.</div>');
+    document.getElementById('file').disabled = true;
+    document.getElementById('load-demo-midi').disabled = true;
+    document.getElementById('load-demo-xml').disabled = true;
+    document.getElementById('load-demo-quartertones').disabled = true;
+  }
+
+  // Show a parse error near the upload control. Cleared on next successful
+  // load (see finishLoad).
+  const errorDisplay = document.getElementById('error-display');
+  function showError(msg) {
+    errorDisplay.textContent = msg;
+    errorDisplay.classList.remove('hidden');
+  }
+  function clearError() {
+    errorDisplay.textContent = '';
+    errorDisplay.classList.add('hidden');
+  }
+
   const fileInput = document.getElementById('file');
   const loadDemoMidiBtn = document.getElementById('load-demo-midi');
   const loadDemoXmlBtn = document.getElementById('load-demo-xml');
@@ -71,12 +104,15 @@
   // Load a MIDI file (Uint8Array of bytes).
   function loadMidiBytes(bytes, label) {
     resetState();
+    clearError();
     filenameDisplay.textContent = label;
     let result;
     try {
       result = M.analyzeMidi(bytes);
     } catch (e) {
-      playbackInfo.textContent = 'Error parsing MIDI: ' + e.message;
+      const msg = 'Error parsing MIDI: ' + e.message;
+      showError(msg);
+      playbackInfo.textContent = msg;
       return;
     }
     finishLoad(result);
@@ -85,26 +121,33 @@
   // Load a MusicXML file (text).
   async function loadMusicXmlText(xmlText, label) {
     resetState();
+    clearError();
     filenameDisplay.textContent = label;
     let result;
     try {
       result = M.analyzeMusicXml(xmlText);
     } catch (e) {
-      playbackInfo.textContent = 'Error parsing MusicXML: ' + e.message;
+      const msg = 'Error parsing MusicXML: ' + e.message;
+      showError(msg);
+      playbackInfo.textContent = msg;
       return;
     }
     finishLoad(result);
     // Render sheet music. Sheet panel only shows for MusicXML files.
+    let sheetRendered = false;
     if (M.isSheetAvailable()) {
       sheetPanel.classList.remove('hidden');
       await M.renderSheet(sheetContainer, xmlText);
+      sheetRendered = sheetContainer.children.length > 0;
     } else {
       sheetPanel.classList.remove('hidden');
       sheetContainer.innerHTML = '<p style="color: var(--muted);">Sheet music renderer (OSMD) failed to load from CDN. The transition graph still works.</p>';
     }
-    // Bring the sheet into view — it's above the graph on the page, but on
-    // shorter viewports the user might not see it without scrolling.
-    sheetPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Bring the sheet into view only if it actually rendered — scrolling to
+    // an error message is more annoying than helpful.
+    if (sheetRendered) {
+      sheetPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
 
   function finishLoad(result) {
@@ -138,6 +181,7 @@
     if (!file) return;
     if (file.size > 16 * 1024 * 1024) {
       playbackInfo.textContent = 'File too large. Limit is 16 MB.';
+      e.target.value = '';  // reset so re-picking same file fires change
       return;
     }
     if (isMusicXml(file.name)) {
@@ -147,6 +191,7 @@
       const buf = await file.arrayBuffer();
       loadMidiBytes(new Uint8Array(buf), file.name);
     }
+    e.target.value = '';  // reset so re-picking same file fires change next time
   });
 
   loadDemoMidiBtn.addEventListener('click', async () => {

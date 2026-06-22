@@ -72,8 +72,8 @@ scripts/
   build-example.js       # regenerates examples/minuet.mid
   build-musicxml-example.js # regenerates examples/minuet.musicxml
 tests/
-  midi.test.js           # 26 node smoke tests for midi.js
-  musicxml.test.js       # 16 node smoke tests for musicxml.js
+  midi.test.js           # node smoke tests for midi.js (parsing, transitions, stats, multi-tempo, rounding)
+  musicxml.test.js       # node smoke tests for musicxml.js (parsing, quarter-tones, multi-tempo sweep)
 netlify.toml             # optional — `publish = "."`
 package.json             # devDependencies only (@xmldom/xmldom for tests)
 ```
@@ -86,21 +86,22 @@ node tests/midi.test.js
 node tests/musicxml.test.js
 ```
 
-42 tests covering parsing, transitions, stats, multi-tempo timing, microtonal alter rounding, and the real example files.
+69 tests covering parsing, transitions, stats, multi-tempo timing (MIDI + MusicXML), banker's-rounding for eighth-tones, negative-cents guards, and the real example files.
 
 ## Limits
 
 - 16 MB upload cap (client-side check, mirrors the old server limit)
 - MIDI format 0 and 1 (which is what virtually every `.mid` you'll find is)
 - SMPTE-timed MIDI files are rejected (extremely rare)
-- Microtonal MusicXML alters (`-1.5`, `0.5` etc.) round to the nearest MIDI semitone for now; full quarter-tone support in playback is a future enhancement
-- Multi-tempo playback works correctly; single global tempo was the old limitation
+- Multi-tempo playback works correctly (MIDI: tempo changes via meta-events; MusicXML: `<direction>` elements are processed in document order)
+- Quarter-tones (alter = ±0.5, ±1.5) are preserved exactly through parsing, transitions, stats, and Tone.js playback. Eighth-tones (alter = ±0.25, ±0.75) round to the nearest quarter-tone for display only — graph nodes, transitions, and stats are all exact in cents
 
 ## Regenerate the demos
 
 ```
-node scripts/build-example.js           # writes examples/minuet.mid
-node scripts/build-musicxml-example.js  # writes examples/minuet.musicxml
+node scripts/build-example.js              # writes examples/minuet.mid
+node scripts/build-musicxml-example.js     # writes examples/minuet.musicxml
+node scripts/build-quartertones-example.js # writes examples/quartertones.musicxml
 ```
 
 Both produce the same 41-note Bach Minuet phrase so you can verify the two parsers produce equivalent output.
