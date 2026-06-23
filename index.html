@@ -35,9 +35,8 @@
   <div class="panel">
     <div class="upload-row">
       <input type="file" id="file" accept=".mid,.midi,.musicxml,.xml,.mxl">
-      <button type="button" id="load-demo-midi">Load demo (Bach Minuet, .mid)</button>
-      <button type="button" id="load-demo-xml">Load demo (Bach Minuet, .musicxml)</button>
-      <button type="button" id="load-demo-quartertones">Load demo (quarter-tones, .musicxml)</button>
+      <button type="button" id="load-demo-midi">Load demo (Ya Tira, .mid)</button>
+      <button type="button" id="load-demo-xml">Load demo (Ya Tira, .mxl)</button>
       <span id="filename-display" class="filename-display"></span>
     </div>
     <!-- Visible error region. Hidden by default; populated on parse failure
@@ -50,7 +49,7 @@
   <div class="panel hidden" id="stats-panel">
     <h2>Summary</h2>
     <div class="stats-grid" id="stats-grid"></div>
-    <h2 style="margin-top: 14px;">Top transitions</h2>
+    <h2 style="margin-top: 14px;">All transitions <span style="font-size: 11px; color: var(--muted); font-weight: 400;">(sorted by probability)</span></h2>
     <div class="top-transitions" id="top-transitions"></div>
   </div>
 

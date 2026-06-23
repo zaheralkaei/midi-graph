@@ -22,7 +22,6 @@
     document.getElementById('file').disabled = true;
     document.getElementById('load-demo-midi').disabled = true;
     document.getElementById('load-demo-xml').disabled = true;
-    document.getElementById('load-demo-quartertones').disabled = true;
   }
 
   // Show a parse error near the upload control. Cleared on next successful
@@ -40,7 +39,6 @@
   const fileInput = document.getElementById('file');
   const loadDemoMidiBtn = document.getElementById('load-demo-midi');
   const loadDemoXmlBtn = document.getElementById('load-demo-xml');
-  const loadDemoQuartBtn = document.getElementById('load-demo-quartertones');
   const filenameDisplay = document.getElementById('filename-display');
   const statsPanel = document.getElementById('stats-panel');
   const graphPanel = document.getElementById('graph-panel');
@@ -95,9 +93,14 @@
       `;
       statsGrid.appendChild(el);
     }
-    topTransitionsEl.innerHTML = stats.top_transitions
-      .map(t => `<code>${t.from} → ${t.to}</code><span class="pct">${(t.probability * 100).toFixed(1)}%</span>`)
-      .join(' &nbsp; ');
+    // ALL transitions, sorted by probability descending. 193 transitions on
+    // one line would be unreadable; render as a vertical scrollable list
+    // capped at ~12 visible rows (CSS scrolls the rest).
+    topTransitionsEl.innerHTML = '<ol class="transition-list">' +
+      stats.all_transitions
+        .map(t => `<li><code>${t.from} → ${t.to}</code><span class="pct">${(t.probability * 100).toFixed(1)}%</span></li>`)
+        .join('') +
+      '</ol>';
     statsPanel.classList.remove('hidden');
   }
 
@@ -175,18 +178,21 @@
   // first bytes is the only reliable signal. See midi.js's detectFileType.
   async function loadFile(file) {
     const buf = await file.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    const detected = M.detectFileType(bytes, file.name);
+    await loadBytes(new Uint8Array(buf), file.name);
+  }
+
+  // Routes raw file bytes through content-sniffing detection, then to the
+  // appropriate parser. Shared by the file picker handler and the demo
+  // button handlers (which don't have a real File object).
+  async function loadBytes(bytes, label) {
+    const detected = M.detectFileType(bytes, label);
 
     if (detected.type === 'midi') {
-      loadMidiBytes(bytes, file.name);
+      loadMidiBytes(bytes, label);
     } else if (detected.type === 'musicxml') {
-      // Decode text here (TextDecoder is forgiving about BOM and encoding).
       const text = new TextDecoder('utf-8').decode(bytes);
-      await loadMusicXmlText(text, file.name);
+      await loadMusicXmlText(text, label);
     } else if (detected.type === 'mxl') {
-      // Compressed MusicXML: unzip, read META-INF/container.xml to find the
-      // rootfile path, extract that, then parse as MusicXML.
       const errs = {};
       const xmlText = M.extractMxl(bytes, errs);
       if (!xmlText) {
@@ -195,10 +201,8 @@
         playbackInfo.textContent = msg;
         return;
       }
-      await loadMusicXmlText(xmlText, file.name);
+      await loadMusicXmlText(xmlText, label);
     } else {
-      // Unknown — show the reason, which already includes the helpful hint
-      // based on the file's extension.
       const msg = 'Could not detect file type. ' + detected.reason;
       showError(msg);
       playbackInfo.textContent = msg;
@@ -221,35 +225,25 @@
 
   loadDemoMidiBtn.addEventListener('click', async () => {
     playbackInfo.textContent = 'Loading demo MIDI…';
-    const resp = await fetch('examples/minuet.mid');
+    const resp = await fetch('examples/vp2-1all.mid');
     if (!resp.ok) {
       playbackInfo.textContent = 'Demo MIDI fetch failed (status ' + resp.status + ').';
       return;
     }
     const buf = await resp.arrayBuffer();
-    loadMidiBytes(new Uint8Array(buf), 'examples/minuet.mid');
+    await loadBytes(new Uint8Array(buf), 'examples/vp2-1all.mid');
   });
 
   loadDemoXmlBtn.addEventListener('click', async () => {
-    playbackInfo.textContent = 'Loading demo MusicXML…';
-    const resp = await fetch('examples/minuet.musicxml');
+    playbackInfo.textContent = 'Loading demo MusicXML (.mxl)…';
+    const resp = await fetch('examples/ya-tyra.mxl');
     if (!resp.ok) {
       playbackInfo.textContent = 'Demo MusicXML fetch failed (status ' + resp.status + ').';
       return;
     }
-    const text = await resp.text();
-    await loadMusicXmlText(text, 'examples/minuet.musicxml');
-  });
-
-  loadDemoQuartBtn.addEventListener('click', async () => {
-    playbackInfo.textContent = 'Loading quarter-tone demo…';
-    const resp = await fetch('examples/quartertones.musicxml');
-    if (!resp.ok) {
-      playbackInfo.textContent = 'Quarter-tone demo fetch failed (status ' + resp.status + ').';
-      return;
-    }
-    const text = await resp.text();
-    await loadMusicXmlText(text, 'examples/quartertones.musicxml');
+    const buf = await resp.arrayBuffer();
+    // Routes through loadBytes → extractMxl → loadMusicXmlText.
+    await loadBytes(new Uint8Array(buf), 'examples/ya-tyra.mxl');
   });
 
   playBtn.addEventListener('click', async () => {

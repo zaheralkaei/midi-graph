@@ -164,7 +164,10 @@
       const linkEnter = linkSel.enter().append('path');
       const linkAll = linkEnter.merge(linkSel);
 
-      // Self-loop labels
+      // Self-loop labels — distinct visual treatment from regular edge labels so
+      // they stand out at a glance: brighter color, larger size, positioned 26px
+      // above the node (above the regular edge labels which sit at midpoint).
+      // Always visible (was hover-only in the previous CSS revision).
       const selfLoops = links.filter(d => d.source === d.target);
       const loopLabelSel = selfLoopLabelGroup.selectAll('text').data(selfLoops, d => d.source);
       loopLabelSel.exit().remove();

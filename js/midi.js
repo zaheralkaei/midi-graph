@@ -20,7 +20,7 @@
 //
 //   computeStats(notes, graph)                    → { ... }
 //       note_count, unique_note_count, unique_notes, transition_count,
-//       top_transitions, self_loop_count, self_loop_share, pitch_range.
+//       all_transitions, self_loop_count, self_loop_share, pitch_range.
 //
 //   centsToPitch(cents)                           → "C4" or "C↑4" / "D#↑4"
 //   stepAlterOctaveToCents(step, alter, octave)   → number (e.g. C half-sharp, 4 → 6050)
@@ -368,7 +368,7 @@ function computeStats(notes, graph) {
     unique_note_count: uniqueNotes.length,
     unique_notes: uniqueNames,
     transition_count: transitionCount,
-    top_transitions: ranked.slice(0, 5).map(([from, to, prob]) => ({
+    all_transitions: ranked.map(([from, to, prob]) => ({
       from,
       to,
       probability: Math.round(prob * 10000) / 10000,

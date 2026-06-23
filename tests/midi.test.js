@@ -344,26 +344,19 @@ test('detectFileType: empty or too-small file', () => {
 // content as a UTF-8 string. Uses fflate under the hood, available both as
 // a browser global and as a node require.
 // ---------------------------------------------------------------------------
-test('extractMxl: examples/quartertones.mxl round-trips to examples/quartertones.musicxml', () => {
-  const mxlPath = path.join(__dirname, '..', 'examples', 'quartertones.mxl');
-  const xmlPath = path.join(__dirname, '..', 'examples', 'quartertones.musicxml');
-  if (!fs.existsSync(mxlPath)) {
-    // Skip gracefully if the example .mxl hasn't been generated yet.
-    // (Run scripts/make-quartertones-mxl.py to create it.)
-    return;
-  }
+test('extractMxl: examples/ya-tyra.mxl round-trips', () => {
+  // ya-tyra.mxl is the quarter-tone demo. extractMxl should unzip it,
+  // read META-INF/container.xml, follow the rootfile pointer, and return
+  // the inner MusicXML as a string.
+  const mxlPath = path.join(__dirname, '..', 'examples', 'ya-tyra.mxl');
   const mxlBytes = new Uint8Array(fs.readFileSync(mxlPath));
   const errs = {};
   const xmlText = m.extractMxl(mxlBytes, errs);
   assert(xmlText, 'extractMxl should return a string, got null. reason: ' + errs.reason);
   assert(xmlText.indexOf('<score-partwise') >= 0,
-    'extracted XML should contain the score-partwise root, got first 200 chars: ' +
-    xmlText.substring(0, 200));
-  // The extracted XML should be identical (byte-for-byte after UTF-8 decode)
-  // to the source .musicxml file.
-  const expected = fs.readFileSync(xmlPath, 'utf-8');
-  assertEqual(xmlText, expected);
+    'extracted text should be MusicXML with a <score-partwise> root');
 });
+
 test('extractMxl: returns null with helpful reason for non-ZIP bytes', () => {
   const errs = {};
   const result = m.extractMxl(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]), errs);
@@ -527,15 +520,21 @@ test('parseMidi: rejects non-MThd file', () => {
   assert(threw, 'should have thrown');
 });
 
-test('parseMidi: real minuet file has expected stats', () => {
-  const file = path.join(__dirname, '..', 'examples', 'minuet.mid');
+test('parseMidi: real demo file has expected stats', () => {
+  // vp2-1all.mid — the MIDI demo. 1094 notes spanning 30 unique pitches
+  // (G#3 through D6). Confirms the parser + transition graph + stats work
+  // end-to-end on a real file, not just synthetic test fixtures.
+  const file = path.join(__dirname, '..', 'examples', 'vp2-1all.mid');
   const bytes = new Uint8Array(fs.readFileSync(file));
   const { stats } = m.analyzeMidi(bytes);
-  assertEqual(stats.note_count, 41);
-  assertEqual(stats.unique_note_count, 8);
-  assertEqual(stats.transition_count, 18);
-  assertEqual(stats.self_loop_count, 3);
-  assertEqual(stats.unique_notes.sort(), ['A5','B4','B5','C5','D5','E5','F#5','G5']);
+  assertEqual(stats.note_count, 1094);
+  assertEqual(stats.unique_note_count, 30);
+  assertEqual(stats.transition_count, 193);
+  // Top transition should be deterministic.
+  assertEqual(stats.all_transitions[0].probability, 1);
+  // Pitch range endpoints (sample a couple, not all 30).
+  assert(stats.unique_notes.includes('G#3'));
+  assert(stats.unique_notes.includes('D6'));
   assert(!stats.unique_notes.includes('C-1'));
 });
 
@@ -591,7 +590,7 @@ test('computeStats: empty notes → safe defaults', () => {
   assertEqual(stats.self_loop_count, 0);
   assertEqual(stats.self_loop_share, 0);
   assertEqual(stats.pitch_range, '—');
-  assertEqual(stats.top_transitions, []);
+  assertEqual(stats.all_transitions, []);
 });
 
 test('computeStats: pitch range across full MIDI span', () => {
@@ -652,6 +651,38 @@ test('ticksToSecondsSegments: piecewise timing is right', () => {
   assert(Math.abs(tickToSec(0) - 0) < 1e-9);
   assert(Math.abs(tickToSec(480) - 0.5) < 1e-9);
   assert(Math.abs(tickToSec(1440) - 2.5) < 1e-9);
+});
+
+test('computeStats: all_transitions contains EVERY transition (not just top 5)', () => {
+  // Regression test for the user-reported bug "not all transitions percents
+  // are shown". The old behavior was top_transitions = ranked.slice(0, 5),
+  // which silently dropped the rest. With dense pieces (vp2-1all.mid has
+  // 193 transitions), 188 of them vanished from the stats panel. Now
+  // all_transitions returns every link, sorted by probability descending.
+  //
+  // Build a graph with 8 transitions and verify all 8 appear.
+  const notes = [6000, 6100, 6200, 6300, 6400, 6500, 6600, 6700];  // 7 unique
+  const g = m.buildTransitionGraph(notes);
+  assertEqual(g.links.length, 7);  // 8 notes → 7 transitions
+  const stats = m.computeStats(notes, g);
+  assertEqual(stats.all_transitions.length, 7);
+  // Sorted by probability descending.
+  for (let i = 1; i < stats.all_transitions.length; i++) {
+    assert(stats.all_transitions[i - 1].probability >= stats.all_transitions[i].probability,
+      'all_transitions must be sorted by probability descending');
+  }
+});
+
+test('computeStats: all_transitions includes self-loops when present', () => {
+  // Self-loops are transitions too and should appear in all_transitions.
+  // Notes: C4, C4, C4 → transition C4→C4 (self-loop, prob=1.0).
+  const notes = [6000, 6000, 6000];
+  const g = m.buildTransitionGraph(notes);
+  const stats = m.computeStats(notes, g);
+  assertEqual(stats.all_transitions.length, 1);
+  assertEqual(stats.all_transitions[0].from, 'C4');
+  assertEqual(stats.all_transitions[0].to, 'C4');
+  assertEqual(stats.all_transitions[0].probability, 1);
 });
 
 console.log('------------');

@@ -114,6 +114,13 @@
             currentlyActive.delete(notes[notes.length - 1].cents);
             onNoteOff(notes[notes.length - 1].cents);
           }
+          // Clear scheduled timer ids now that the play has fully completed.
+          // Without this, a second call to play() would see scheduledTimers
+          // non-empty and bail out at the double-play guard, leaving the user
+          // unable to replay the same file. (stop() already clears them on
+          // explicit user cancellation.)
+          scheduledTimers = [];
+          playEndedTimer = null;
           resolve(totalSec);
         }, totalSec * 1000);
       });

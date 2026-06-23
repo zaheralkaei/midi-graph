@@ -2,7 +2,7 @@
 
 Upload a MIDI or MusicXML file. Get a visual map of which notes follow which. See the sheet music. Hear it played back in the browser.
 
-The app builds a Markov-style transition graph from the note sequence (note A → note B, with the empirical probability of that transition) and renders it as a force-directed D3 graph you can drag, filter, and zoom. Stats panel shows total notes, unique pitches, top transitions, self-loop rate, and pitch range. Playback is real audio via Tone.js — the browser can't decode `.mid` natively, so we parse the file entirely client-side. MusicXML files additionally get a sheet music render via OSMD (OpenSheetMusicDisplay).
+The app builds a Markov-style transition graph from the note sequence (note A → note B, with the empirical probability of that transition) and renders it as a force-directed D3 graph you can drag, filter, and zoom. Stats panel shows total notes, unique pitches, all transitions (sorted by probability), self-loop rate, and pitch range. Playback is real audio via Tone.js — the browser can't decode `.mid` natively, so we parse the file entirely client-side. MusicXML files additionally get a sheet music render via OSMD (OpenSheetMusicDisplay).
 
 **100% static.** No server, no Python, no install. The whole app is HTML + JS + CSS. Drag the folder onto Netlify and you're done.
 
@@ -32,7 +32,7 @@ netlify deploy --prod --dir=.
 ## What you get
 
 - **Graph** — every unique pitch in the file is a node, every observed transition is a directed edge. Edge thickness is proportional to probability. Self-loops (A→A) get their own arc.
-- **Stats** — note count, unique pitches, total transitions, self-loop count + share, pitch range, top 5 transitions.
+- **Stats** — note count, unique pitches, total transitions, self-loop count + share, pitch range, ALL transitions (sorted by probability).
 - **Filter** — minimum probability, minimum/maximum pitch range. Pitch-class color coding on/off. Edge thickness on/off.
 - **Playback** — Tone.js PolySynth with real note durations (note_on → matching note_off) and multi-tempo support (a piece that changes tempo plays at the right speed throughout).
 - **Sheet music** (MusicXML files only) — OSMD renders the score as SVG inside the browser. MIDI files don't carry notation data, so this panel only appears for `.musicxml` / `.xml`.
@@ -41,6 +41,7 @@ netlify deploy --prod --dir=.
 
 - `.mid`, `.midi` — Standard MIDI. Parsed by `js/midi.js` directly in the browser (no library, no server).
 - `.musicxml`, `.xml` — MusicXML 3.1 partwise and timewise. Parsed by `js/musicxml.js` using the browser's built-in `DOMParser`. Sheet music rendered by OSMD.
+- `.mxl` — Compressed MusicXML (a ZIP with `META-INF/container.xml`). Unzipped in-browser via the vendored `fflate` library; rootfile is read and routed through the same `js/musicxml.js` parser.
 
 Both formats produce the same event shape internally, so transitions, stats, graph, and playback all work identically regardless of source.
 
@@ -52,7 +53,7 @@ Both formats produce the same event shape internally, so transitions, stats, gra
 - Min probability slider hides weak edges
 - Min/max pitch sliders hide out-of-range notes
 - "Color by pitch class" toggle: 12 distinct colors per chromatic class, or single accent color
-- "Load demo" buttons load Bach's Minuet in G (first 8 bars) — both MIDI and MusicXML versions
+- "Load demo" buttons load "Ya Tira" — both the MIDI (vp2-1all.mid, 1094 notes, 30 pitches) and compressed MusicXML (ya-tyra.mxl, 243 notes, 8 pitches including 2 quarter-tones). Both files are the same melody; the MIDI form lost microtonal resolution on export.
 
 ## Files
 
@@ -66,11 +67,10 @@ js/playback.js           # Tone.js playback (real durations, multi-tempo)
 js/sheet.js              # OSMD sheet music rendering (MusicXML only)
 js/app.js                # glue layer — wires the modules together
 examples/
-  minuet.mid             # demo file (Bach, Minuet in G)
-  minuet.musicxml        # same melody, MusicXML form
+  vp2-1all.mid            # demo file — "Ya Tira", MIDI form (no quarter-tones)
+  ya-tyra.mxl             # same melody — compressed MusicXML (with quarter-tones)
 scripts/
-  build-example.js       # regenerates examples/minuet.mid
-  build-musicxml-example.js # regenerates examples/minuet.musicxml
+  serve-nocache.py        # local dev server with no-cache headers
 tests/
   midi.test.js           # node smoke tests for midi.js (parsing, transitions, stats, multi-tempo, rounding)
   musicxml.test.js       # node smoke tests for musicxml.js (parsing, quarter-tones, multi-tempo sweep)
@@ -81,12 +81,12 @@ package.json             # devDependencies only (@xmldom/xmldom for tests)
 ## Tests
 
 ```
-npm install              # one-time: gets @xmldom/xmldom for MusicXML tests
+npm install              # one-time: gets @xmldom/xmldom + fflate for tests
 node tests/midi.test.js
 node tests/musicxml.test.js
 ```
 
-69 tests covering parsing, transitions, stats, multi-tempo timing (MIDI + MusicXML), banker's-rounding for eighth-tones, negative-cents guards, and the real example files.
+90 tests covering parsing, transitions, stats, multi-tempo timing (MIDI + MusicXML), banker's-rounding for eighth-tones, negative-cents guards, .mxl extraction, content-sniffing file routing, and the real example files.
 
 ## Limits
 
@@ -95,16 +95,6 @@ node tests/musicxml.test.js
 - SMPTE-timed MIDI files are rejected (extremely rare)
 - Multi-tempo playback works correctly (MIDI: tempo changes via meta-events; MusicXML: `<direction>` elements are processed in document order)
 - Quarter-tones (alter = ±0.5, ±1.5) are preserved exactly through parsing, transitions, stats, and Tone.js playback. Eighth-tones (alter = ±0.25, ±0.75) round to the nearest quarter-tone for display only — graph nodes, transitions, and stats are all exact in cents
-
-## Regenerate the demos
-
-```
-node scripts/build-example.js              # writes examples/minuet.mid
-node scripts/build-musicxml-example.js     # writes examples/minuet.musicxml
-node scripts/build-quartertones-example.js # writes examples/quartertones.musicxml
-```
-
-Both produce the same 41-note Bach Minuet phrase so you can verify the two parsers produce equivalent output.
 
 ## License
 
