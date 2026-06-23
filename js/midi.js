@@ -254,73 +254,92 @@ function parseMidi(bytes) {
   const events = [];
   let tempoBPM = 120;          // MIDI default until a set-tempo meta arrives
   let microsPerQuarter = 500000;
-  for (const track of tracks) {
-    let p = 0;
-    let t = 0;
-    let runningStatus = 0;
-    while (p < track.length) {
-      let delta;
-      [delta, p] = readVarLen(track, p);
-      t += delta;
-      let status = track[p];
-      if (status < 0x80) {
-        // Running status: data byte reuses last channel-voice status.
-        status = runningStatus;
-      } else {
-        p++;
-        if (status >= 0x80 && status < 0xf0) runningStatus = status;
-      }
-      if (status === 0xff) {
-        // Meta event. We only care about set-tempo (0x51) for playback timing.
-        const metaType = track[p++];
-        let len;
-        [len, p] = readVarLen(track, p);
-        if (metaType === 0x51 && len === 3) {
-          microsPerQuarter = (track[p] << 16) | (track[p + 1] << 8) | track[p + 2];
-          tempoBPM = Math.round(60_000_000 / microsPerQuarter);
-        }
-        p += len;
-      } else if (status === 0xf0 || status === 0xf7) {
-        // System exclusive — skip its VLQ-length payload.
-        let len;
-        [len, p] = readVarLen(track, p);
-        p += len;
-      } else {
-        const hi = status & 0xf0;
-        if (hi === 0x90) {
-          const midiNote = track[p++];
-          const vel = track[p++];
-          // MIDI is 12-TET — note byte → cents is exact (×100).
-          const cents = midiNote * 100;
-          if (vel > 0) {
-            events.push({ timeTicks: t, type: 'on', note: cents, vel, tempoBPM });
-          } else {
-            // note_on with velocity 0 is the standard "note_off" shorthand.
-            events.push({ timeTicks: t, type: 'off', note: cents, tempoBPM });
-          }
-        } else if (hi === 0x80) {
-          const midiNote = track[p++];
-          const vel = track[p++];
-          const cents = midiNote * 100;
-          events.push({ timeTicks: t, type: 'off', note: cents, vel, tempoBPM });
-        } else if (hi === 0xa0 || hi === 0xb0 || hi === 0xe0) {
-          // Aftertouch / CC / pitch-bend — 2 data bytes.
-          p += 2;
-        } else if (hi === 0xc0 || hi === 0xd0) {
-          // Program change / channel pressure — 1 data byte.
-          p += 1;
+  // Walk all tracks, merging events in track order then by absolute time
+    // into a single events[] stream (back-compat — playback + graph still
+    // work off the merged stream). We ALSO record per-track events[] and
+    // collect time-signature meta events so the synth can pick a single
+    // track and emit <time> elements per measure.
+    const perTrackEvents = tracks.map(() => []);
+    const timeSignatures = [];   // [{ tick, num, den }]
+    for (let ti = 0; ti < tracks.length; ti++) {
+      const track = tracks[ti];
+      let p = 0;
+      let t = 0;                  // absolute tick within this track
+      let runningStatus = 0;
+      while (p < track.length) {
+        let delta;
+        [delta, p] = readVarLen(track, p);
+        t += delta;
+        let status = track[p];
+        if (status < 0x80) {
+          // Running status — the previous status byte still applies.
+          status = runningStatus;
         } else {
-          // Unknown status — bail rather than silently corrupting the stream.
-          throw new Error(`Unknown MIDI status byte 0x${status.toString(16)} at track offset ${p - 1}`);
+          p++;
+          if (status >= 0x80 && status < 0xf0) runningStatus = status;
+        }
+        if (status === 0xff) {
+          // Meta event.
+          const metaType = track[p++];
+          let len;
+          [len, p] = readVarLen(track, p);
+          if (metaType === 0x51 && len === 3) {
+            microsPerQuarter = (track[p] << 16) | (track[p + 1] << 8) | track[p + 2];
+            tempoBPM = Math.round(60_000_000 / microsPerQuarter);
+          } else if (metaType === 0x58 && len === 4) {
+            // Time signature: numerator, denominator (log2), CC, bb.
+            // FF 58 04 nn dd cc bb — dd is the power of 2 for the
+            // denominator, so dd=2 → /4, dd=3 → /8, etc.
+            const num = track[p];
+            const denPow = track[p + 1];
+            const den = Math.pow(2, denPow);
+            timeSignatures.push({ tick: t, num, den });
+          }
+          p += len;
+        } else if (status === 0xf0 || status === 0xf7) {
+          let len;
+          [len, p] = readVarLen(track, p);
+          p += len;
+        } else {
+          const hi = status & 0xf0;
+          if (hi === 0x90) {
+            const midiNote = track[p++];
+            const vel = track[p++];
+            const cents = midiNote * 100;
+            if (vel > 0) {
+              const ev = { timeTicks: t, type: 'on', note: cents, vel, tempoBPM, track: ti };
+              events.push(ev);
+              perTrackEvents[ti].push(ev);
+            } else {
+              const ev = { timeTicks: t, type: 'off', note: cents, tempoBPM, track: ti };
+              events.push(ev);
+              perTrackEvents[ti].push(ev);
+            }
+          } else if (hi === 0x80) {
+            const midiNote = track[p++];
+            const vel = track[p++];
+            const cents = midiNote * 100;
+            const ev = { timeTicks: t, type: 'off', note: cents, vel, tempoBPM, track: ti };
+            events.push(ev);
+            perTrackEvents[ti].push(ev);
+          } else if (hi === 0xa0 || hi === 0xb0 || hi === 0xe0) {
+            p += 2;
+          } else if (hi === 0xc0 || hi === 0xd0) {
+            p += 1;
+          } else {
+            throw new Error(`Unknown MIDI status byte 0x${status.toString(16)} at track offset ${p - 1}`);
+          }
         }
       }
     }
-  }
 
-  // Sort by absolute tick time so multi-track playback is correctly interleaved.
-  events.sort((a, b) => a.timeTicks - b.timeTicks);
-  return { events, ticksPerQuarter };
-}
+    // Sort by absolute tick time so multi-track playback is correctly interleaved.
+    events.sort((a, b) => a.timeTicks - b.timeTicks);
+    // Sort time signatures by tick so the synth can find the active one
+    // for any given measure with a binary search.
+    timeSignatures.sort((a, b) => a.tick - b.tick);
+    return { events, ticksPerQuarter, tracks: perTrackEvents, timeSignatures };
+  }
 
 // ---------------------------------------------------------------------------
 // notesFromEvents: the playback-order sequence of struck notes. Mirrors the
@@ -514,11 +533,12 @@ function ticksToSecondsSegments(events, ticksPerQuarter) {
 // Returns { graph, stats } given a Uint8Array of .mid bytes.
 // ---------------------------------------------------------------------------
 function analyzeMidi(bytes) {
-  const { events, ticksPerQuarter } = parseMidi(bytes);
+  const parsed = parseMidi(bytes);
+  const { events, ticksPerQuarter, tracks, timeSignatures } = parsed;
   const notes = notesFromEvents(events);
   const graph = buildTransitionGraph(notes);
   const stats = computeStats(notes, graph);
-  return { graph, stats, events, ticksPerQuarter };
+  return { graph, stats, events, ticksPerQuarter, tracks, timeSignatures };
 }
 
 // ---------------------------------------------------------------------------

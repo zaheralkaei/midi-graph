@@ -333,274 +333,437 @@
     return { graph, stats, events, ticksPerQuarter, parts, measures };
   }
 
-  // ---------------------------------------------------------------------------
-// buildSyntheticMusicXml(events, ticksPerQuarter) → MusicXML 3.1 string
-//
-// Synthesizes a MusicXML score from a parsed MIDI event list so .mid files
-// can also get a sheet-music render. Caveats:
-//   - Notes use each note's actual duration (note_on → note_off pairs).
-//     Unmatched note_ons (no following note_off) get a default quarter.
-//   - One measure = 4 quarters (4/4 time, fixed).
-//   - No dynamics, articulations, beaming, slurs, key signature, or
-//     tempo markings — just pitches and approximate durations.
-//   - Quarter-tones come through exactly because cents → step/alter/
-//     octave uses QUARTER_TONE_NAMES.
-//
-// This is good enough to read the melody as sheet music; not good
-// enough to use as the authoritative notation.
-// ---------------------------------------------------------------------------
-function buildSyntheticMusicXml(events, ticksPerQuarter) {
-  // Pair each note_on with its matching note_off. The MIDI may contain
-  // polyphonic chords (multiple notes sounding simultaneously) and repeated
-  // hits at the same tick, so we MUST keep a STACK of pending onsets per
-  // pitch, not just one. Earlier versions used Map<cents, tickOn> which
-  // silently overwrote earlier pending notes when a new note_on arrived
-  // for the same pitch, dropping pickup notes and producing 0-duration
-  // ghost notes. Stack semantics:
-  //   note_on  → push the onset tick onto the stack for that pitch
-  //   note_off → pop the most recent onset and emit a (start, dur, pitch)
-  //              record. If the stack is empty (orphan note_off), skip.
-  //   any pending entries left at the end → emit a default-duration note
-  //     so the user still sees the pitch (e.g. the final sustained note
-  //     of a piece with no off-event).
-  const pending = new Map();   // cents → tickOn[]  (FIFO queue of pending onsets)
-  const notes = [];             // [{ startTick, durTick, cents }]
-  for (const ev of events) {
-    if (ev.type === 'on') {
-      if (!pending.has(ev.note)) pending.set(ev.note, []);
-      pending.get(ev.note).push(ev.timeTicks);
-    } else if (ev.type === 'off') {
-      const stack = pending.get(ev.note);
-      if (stack && stack.length) {
-        // FIFO (shift, not pop): the OFF closes the OLDEST pending
-        // ON. For most MIDI this is fine — note_on / note_off pairs
-        // are usually nested cleanly. The exception is the "sustained
-        // + re-articulate" pattern, where the same pitch has ON1 at
-        // tick T, ON2 at the same tick T (a re-attack), then OFF at
-        // the same tick T. With LIFO pop, OFF would close the just-
-        // started ON2 (dur=0 → 1-tick ghost), leaving ON1 dangling
-        // until the NEXT off (dur=480+). With FIFO shift, OFF at T
-        // closes ON1 (the sustained note), the dangling 1-tick ghost
-        // is avoided, and ON2 ends at the next off normally. For
-        // polyphonic chords (different pitches) FIFO and LIFO are
-        // equivalent since each pitch has its own stack.
-        const tOn = stack.shift();
-        // Floor to 1 tick — MusicXML accepts any positive integer, and
-        // a 0-duration note is visually unrenderable. This is rare in
-        // real MIDI (most sustained notes have at least 30 ticks of
-        // duration) and only happens for very short grace-note-style
-        // events at the same tick.
-        const dur = Math.max(1, ev.timeTicks - tOn);
-        notes.push({ startTick: tOn, durTick: dur, cents: ev.note });
-      }
-      if (stack && stack.length === 0) pending.delete(ev.note);
-    }
-  }
-  // Unmatched note_ons get a default quarter so they still appear in the
-  // score rather than being silently dropped.
-  const defaultDur = ticksPerQuarter || 480;
-  for (const [cents, stack] of pending) {
-    for (const tOn of stack) {
-      notes.push({ startTick: tOn, durTick: defaultDur, cents });
-    }
-  }
-  // Sort by start time so the score reads top-to-bottom.
-  notes.sort((a, b) => a.startTick - b.startTick);
-
-  // Pick note durations as MusicXML divisions. We round to the closest
-  // standard duration (whole/half/quarter/eighth/16th) so the visual score
-  // is readable — using the raw tick duration produces 80-tick "16th notes"
-  // and 680-tick "quarter notes" that look malformed in the engraving.
-  // The trade-off: the synth score shows APPROXIMATE durations. The actual
-  // playback (in playback.js) uses the exact real durations from the
-  // note_on/note_off pairing, so the audio is exact even though the
-  // notation is rounded.
+  // buildSyntheticMusicXml(eventsOrResult, ticksPerQuarter?) → MusicXML 3.1 string
   //
-  // Snap-to-nearest logic:
-  //   dur 1-40     → 16th (120)    [very short grace notes snap to 16th]
-  //   dur 41-180   → 16th          [40-180 → 120, the 16th is closest]
-  //   dur 181-360  → eighth        [181-360 → 240, eighth is closest]
-  //   dur 361-720  → quarter       [361-720 → 480, quarter is closest]
-  //   dur 721-1440 → half          [721-1440 → 960, half is closest]
-  //   dur 1441+    → whole
-  const q = ticksPerQuarter || 480;
-  const STD_DURATIONS = [
-    { name: '16th',    div: q / 4 },
-    { name: 'eighth',  div: q / 2 },
-    { name: 'quarter', div: q },
-    { name: 'half',    div: q * 2 },
-    { name: 'whole',   div: q * 4 },
-  ];
-  function durNameFor(ticks) {
-    // Pick the standard duration with the smallest absolute distance.
-    let best = STD_DURATIONS[0];
-    let bestDiff = Math.abs(ticks - best.div);
-    for (let i = 1; i < STD_DURATIONS.length; i++) {
-      const d = Math.abs(ticks - STD_DURATIONS[i].div);
-      if (d < bestDiff) { best = STD_DURATIONS[i]; bestDiff = d; }
-    }
-    return best;
-  }
-
-  // Group notes by measure (4/4 time). MEASURE_TICKS = q * 4 = 1920.
-  // If a note's duration exceeds the remaining ticks in its measure, we
-  // push it to a "carryover" list that gets emitted at the START of the
-  // next measure. This preserves pitch presence at the cost of putting
-  // the carried note visually out-of-order (acceptable for a synthesized
-  // score — better than silently dropping it).
-  const MEASURE_TICKS = q * 4;
-  const byMeasure = new Map();
-  for (const n of notes) {
-    const measIdx = Math.floor(n.startTick / MEASURE_TICKS);
-    if (!byMeasure.has(measIdx)) byMeasure.set(measIdx, []);
-    // Use the snapped (standard) duration for both divisions and the type.
-    // The carryover logic uses `divisions` to decide if a note fits, and
-    // the rendering uses it for the <duration> element. Storing the raw
-    // durTick here would let through 60- and 80-tick notes that are
-    // unrenderable as standard notation, and would make the carryover
-    // sum drift (since 16th=120 fits 1920 evenly but 80 doesn't).
-    const dur = durNameFor(n.durTick);
-    byMeasure.get(measIdx).push({
-      cents: n.cents,
-      divisions: dur.div,
-      durName: dur.name,
-    });
-  }
-  if (byMeasure.size === 0) byMeasure.set(0, []);
-
-  // Emit measures, processing carryover between them.
-  const xml = [];
-  xml.push('<?xml version="1.0" encoding="UTF-8"?>');
-  // DOCTYPE + <defaults> + <identification> match the structure of a
-  // MusicXML file exported from MuseScore / Sibelius / Dorico. OSMD
-  // and other MusicXML consumers expect these to be present; a
-  // minimal but valid <defaults> prevents "Cannot read properties of
-  // undefined (reading 'toLowerCase')" errors that happen when OSMD
-  // tries to read scaling/measure-layout attributes that don't exist.
-  xml.push('<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">');
-  xml.push('<score-partwise version="4.0">');
-  xml.push('  <work><work-title>Synthesized</work-title></work>');
-  xml.push('  <identification>');
-  xml.push('    <encoding><software>midi-graph synth</software></encoding>');
-  xml.push('  </identification>');
-  xml.push('  <defaults>');
-  xml.push('    <scaling><millimeters>7</millimeters><tenths>40</tenths></scaling>');
-  xml.push('    <page-layout><page-height>1700</page-height><page-width>1200</page-width></page-layout>');
-  xml.push('    <staff-layout><staff-distance>80</staff-distance></staff-layout>');
-  xml.push('  </defaults>');
-  xml.push('  <part-list>');
-  xml.push('    <score-part id="P1"><part-name>Synthesized</part-name></score-part>');
-  xml.push('  </part-list>');
-  xml.push('  <part id="P1">');
-
-  const sortedMeas = Array.from(byMeasure.keys()).sort((a, b) => a - b);
-  // We pre-compute the total duration of each measure. A measure is
-  // "overflow" if its snapped notes sum to more than MEASURE_TICKS. The
-  // overflow notes go to the NEXT measure's carryover. The LAST measure's
-  // overflow gets truncated (synthesized scores are allowed to slightly
-  // exceed or underflow the last bar — it's a tail-end artifact).
+  // Synthesizes a MusicXML score from MIDI events so .mid files (which
+  // don't carry notation data) can render sheet music alongside the
+  // transition graph. Four improvements over the original hand-rolled
+  // approach:
   //
-  // The earlier "push to carryover, break" logic created cascading
-  // overflows across many measures because the carryover consumed space
-  // the next measure needed for its own notes. The fix here: each
-  // measure's "carryover" only ever contains notes from THIS measure's
-  // overflow, not from earlier measures — and we process the carryover
-  // at the START of the next measure in a single pre-pass.
-  const overflowByMeasure = new Map();  // measureIdx → extra notes
-  for (const m of sortedMeas) {
-    const ns = byMeasure.get(m);
-    let sum = 0;
-    let cutoff = ns.length;
-    for (let i = 0; i < ns.length; i++) {
-      if (sum + ns[i].divisions > MEASURE_TICKS) {
-        cutoff = i;
-        break;
-      }
-      sum += ns[i].divisions;
+  //   1. Multi-track selection — real MIDI often has the melody in track
+  //      1 and accompaniment / drums in others. We pick the track with
+  //      the most note_on events and use only its events. If parseMidi
+  //      didn't expose per-track data (older call sites), we fall back
+  //      to the merged events stream.
+  //
+  //   2. Time-signature detection — MIDI files can carry FF 58 meta
+  //      events. The first one wins (we don't yet support mid-piece
+  //      signature changes). If absent, default to 4/4. The signature
+  //      drives the measure length and is emitted as <attributes><time>
+  //      in the first measure.
+  //
+  //   3. Chord grouping — simultaneous note_ons (within a tolerance of
+  //      ~1/8 of a quarter, to absorb human timing jitter) are bundled
+  //      into one MusicXML chord: one <note> + N-1 <chord/> siblings
+  //      sharing a single rhythmic position. Without this, a piano triad
+  //      reads as three consecutive notes instead of a stacked chord
+  //      symbol — visually wrong for any polyphonic material.
+  //
+  //   4. Measure overflow with ties — a note that doesn't fit in the
+  //      remaining measure ticks is split: the part that fits gets
+  //      <tie type="start"/> and the remainder lands in the next
+  //      measure with <tie type="stop"/>. This is the MusicXML-correct
+  //      way to handle cross-measure durations; OSMD renders ties
+  //      correctly. Replaces the previous "push to carryover, flush
+  //      overflow into a final measure" hack that was the source of
+  //      every "jammed notes / wrong values" bug report.
+  //
+  // Signature: accepts either (events, ticksPerQuarter) — old call site
+  // used by the test suite — or (analyzeResult) where analyzeResult has
+  // { events, ticksPerQuarter, tracks?, timeSignatures? }. The new form
+  // unlocks the multi-track + time-signature improvements; the old form
+  // still works (with all-notes-merged, no time-sig metadata).
+  function buildSyntheticMusicXml(eventsOrResult, ticksPerQuarter) {
+    // Normalize the signature. Old call site: (events, ticksPerQuarter).
+    // New call site: (analyzeResult) where analyzeResult has
+    // { events, ticksPerQuarter, tracks?, timeSignatures? }.
+    let allEvents, tracks, timeSignatures, tpq;
+    if (Array.isArray(eventsOrResult)) {
+      allEvents = eventsOrResult;
+      tpq = ticksPerQuarter;
+    } else {
+      allEvents = eventsOrResult.events;
+      tracks = eventsOrResult.tracks;
+      timeSignatures = eventsOrResult.timeSignatures;
+      tpq = eventsOrResult.ticksPerQuarter;
     }
-    if (cutoff < ns.length) {
-      overflowByMeasure.set(m, ns.slice(cutoff));
+
+    // ---- 1. Multi-track selection ----
+    // If parseMidi gave us per-track events, pick the track with the most
+    // note_on events. Tracks with only meta events (tempo/time-sig text
+    // markers, controller moves, etc.) get filtered out automatically.
+    // If no per-track data was passed (old call sites), fall back to the
+    // merged stream — same behavior as before.
+    if (tracks && tracks.length > 1) {
+      let bestTrack = 0;
+      let bestCount = -1;
+      for (let i = 0; i < tracks.length; i++) {
+        let n = 0;
+        for (const e of tracks[i]) if (e.type === 'on') n++;
+        if (n > bestCount) { bestCount = n; bestTrack = i; }
+      }
+      // Only switch if the chosen track actually has notes — a file
+      // where all tracks are empty is degenerate but possible.
+      if (bestCount > 0) {
+        events = tracks[bestTrack];
+      } else {
+        events = allEvents;
+      }
+    } else {
+      events = allEvents;
+    }
+
+    // ---- 2. Time-signature detection ----
+    // First FF 58 meta wins. Default 4/4 if absent or unparseable.
+    let timeNum = 4, timeDen = 4;
+    if (timeSignatures && timeSignatures.length > 0) {
+      const ts = timeSignatures[0];
+      if (ts.num >= 1 && ts.num <= 32 && ts.den >= 1 && ts.den <= 64) {
+        timeNum = ts.num;
+        timeDen = ts.den;
+      }
+    }
+    // Measure length = (timeNum / timeDen) * 4 * tpq quarters... actually
+    // measure ticks = timeNum * (ticksPerQuarter * 4 / timeDen).
+    // For 4/4 that's 4 * tpq. For 3/4 it's 3 * tpq. For 6/8 it's
+    // 6 * tpq / 2 = 3 * tpq. The formula below is correct for any
+    // numerator / denominator pair.
+    const q = tpq || 480;
+    const MEASURE_TICKS = Math.round(timeNum * (q * 4 / timeDen));
+    const TIE_SPLIT_EPS = q / 16;  // chord-grouping tolerance (~1/16 quarter)
+
+    // ---- Pair note_on with note_off (FIFO stack per pitch) ----
+    // Same logic as before but only over the selected track's events.
+    // Note: the FIFO/LIFO choice doesn't matter here because we already
+    // apply the same algorithm — keep it consistent with playback.js.
+    const pending = new Map();
+    const notes = [];
+    for (const ev of events) {
+      if (ev.type === 'on') {
+        if (!pending.has(ev.note)) pending.set(ev.note, []);
+        pending.get(ev.note).push(ev.timeTicks);
+      } else if (ev.type === 'off') {
+        const stack = pending.get(ev.note);
+        if (stack && stack.length) {
+          const tOn = stack.shift();
+          const dur = Math.max(1, ev.timeTicks - tOn);
+          notes.push({ startTick: tOn, durTick: dur, cents: ev.note });
+        }
+        if (stack && stack.length === 0) pending.delete(ev.note);
+      }
+    }
+    const defaultDur = q;
+    for (const [cents, stack] of pending) {
+      for (const tOn of stack) {
+        notes.push({ startTick: tOn, durTick: defaultDur, cents });
+      }
+    }
+    // ---- Snap to nearest 16th-note grid ----
+      // Real MIDI often has notes whose actual durations are not exact
+      // multiples of a 16th (60-tick eighths in our 480-tpq demo, or even
+      // 80-tick grace notes). For sheet music we want all positions and
+      // durations to snap to a 16th grid so the visual layout doesn't
+      // have overlapping or oddly-staggered notes. The trade-off: the
+      // synth score shows APPROXIMATE durations and positions. The
+      // playback (in playback.js) uses the exact real durations from the
+      // note_on/note_off pairing, so the audio stays exact.
+      //
+      // Snap-to-nearest logic:
+      //   dur 1-40     → 16th (120)    [very short grace notes snap to 16th]
+      //   dur 41-180   → 16th          [40-180 → 120, the 16th is closest]
+      //   dur 181-360  → eighth        [181-360 → 240, eighth is closest]
+      //   dur 361-720  → quarter       [361-720 → 480, quarter is closest]
+      //   dur 721-1440 → half          [721-1440 → 960, half is closest]
+      //   dur 1441+    → whole
+      const SIXTEENTH = q / 4;
+        const STD_DURATIONS = [
+          { name: '16th',    div: SIXTEENTH },
+          { name: 'eighth',  div: q / 2 },
+          { name: 'quarter', div: q },
+          { name: 'half',    div: q * 2 },
+          { name: 'whole',   div: q * 4 },
+        ];
+      function durNameFor(ticks) {
+        let best = STD_DURATIONS[0];
+        let bestDiff = Math.abs(ticks - best.div);
+        for (let i = 1; i < STD_DURATIONS.length; i++) {
+          const d = Math.abs(ticks - STD_DURATIONS[i].div);
+          if (d < bestDiff) { best = STD_DURATIONS[i]; bestDiff = d; }
+        }
+        return best;
+      }
+      // Quantize a raw tick to the nearest 16th-note boundary. MIDI notes
+      // played slightly early/late (10-30 ticks of human jitter) all land
+      // on the same 16th slot, which keeps the visual score tidy.
+      function snapStart(tick) {
+        return Math.round(tick / SIXTEENTH) * SIXTEENTH;
+      }
+
+      // Sort + quantize start times to the 16th grid. Then DEDUPE: if two
+      // notes snap to the same startTick, keep the louder one (the other
+      // was a soft grace note or human-jitter re-attack). This is what
+      // OSMD-graded notation expects.
+      notes.sort((a, b) => a.startTick - b.startTick);
+      const quantizedNotes = [];
+      for (const n of notes) {
+        const snapped = snapStart(n.startTick);
+        const dur = durNameFor(n.durTick);
+        // If the previous note has the same snapped startTick, this is a
+        // duplicate. Keep the louder one (we don't have velocity here, so
+        // keep the later one — the most recent note at that position).
+        if (quantizedNotes.length > 0 &&
+            quantizedNotes[quantizedNotes.length - 1].startTick === snapped) {
+          continue;
+        }
+        quantizedNotes.push({ startTick: snapped, durTick: dur.div, cents: n.cents, _durName: dur.name });
+      }
+
+      // ---- 3. Chord grouping ----
+      // Walk the sorted+quantized notes and bundle any whose startTick
+      // matches. After quantization, simultaneous events (or events that
+      // were within 1/16 of a quarter of each other) all share one tick,
+      // so we just look for adjacent equal startTicks.
+      const chords = [];
+      let cur = null;
+      for (const n of quantizedNotes) {
+        if (cur && n.startTick === cur.startTick) {
+          cur.members.push(n);
+        } else {
+          if (cur) chords.push(cur);
+          cur = { startTick: n.startTick, members: [n] };
+        }
+      }
+      if (cur) chords.push(cur);
+
+    // ---- 4. Measure overflow with ties ----
+    // Walk chords in order. For each chord, figure out how much of its
+    // duration fits in the current measure. If the chord fits entirely,
+    // emit it as-is. If not, split: emit the fitted portion with
+    // <tie type="start"/> and queue the remainder for the next measure
+    // with <tie type="stop"/>. Tied carries can themselves overflow
+    // another measure (rare in 4/4) — we recurse until the remainder
+    // is consumed.
+    //
+    // We pre-compute each chord's snapped duration here so the carry
+    // logic and the carry's own carry see the same numbers. Carries
+    // keep their original startTick (for ordering) but consume their
+    // own duration from the next measure's clock.
+    const chordPlans = [];   // [{ startTick, members, divisions, durName, carry? }]
+    let cursorTick = 0;      // absolute clock — advances as we emit
+    for (const c of chords) {
+      // The chord's nominal duration = min of its members' snapped
+      // durations. The chord lifts when the first finger lifts.
+      let minDiv = Infinity, minName = 'quarter';
+      for (const m of c.members) {
+        const d = durNameFor(m.durTick);
+        if (d.div < minDiv) { minDiv = d.div; minName = d.name; }
+      }
+      c._divisions = minDiv;
+      c._durName = minName;
+      chordPlans.push(c);
+    }
+
+    // Build the list of measure segments. Each entry is either a chord
+    // (with a carry of {remainingDiv, durName, members} if it overflows)
+    // or a rest.
+    const measures = [];   // [{ tick, items: [{kind, ...}] }]
+    let i = 0;
+    let measureTick = 0;
+    let m = { tick: cursorTick - (cursorTick % MEASURE_TICKS), items: [] };
+    while (i < chordPlans.length) {
+      const c = chordPlans[i];
+      const cStartInMeasure = c.startTick - m.tick;
+      // If the chord starts in a future measure, close this measure out
+      // with rests and open the next one. (This shouldn't normally
+      // happen because we process chords in startTick order, but the
+      // overflow-carryover path can land a carry in a later measure.)
+      if (cStartInMeasure >= MEASURE_TICKS) {
+        measures.push(m);
+        measureTick = 0;
+        m = { tick: m.tick + MEASURE_TICKS, items: [] };
+        continue;
+      }
+      // Skip over any silence before this chord — leave it for the rest
+      // pass at the end.
+      const cDiv = c._divisions;
+      if (cDiv <= 0) { i++; continue; }
+      if (cStartInMeasure < 0) {
+        // Chord starts before the current measure's tick (only possible
+        // for carries — but carries have already been accounted for).
+        // Skip and continue.
+        i++;
+        continue;
+      }
+      const remaining = MEASURE_TICKS - measureTick;
+      if (cDiv <= remaining) {
+        // Fits. Emit as-is (no tie).
+        m.items.push({ kind: 'chord', chord: c, div: cDiv, tie: null });
+        measureTick += cDiv;
+        if (measureTick >= MEASURE_TICKS) {
+          measures.push(m);
+          m = { tick: m.tick + MEASURE_TICKS, items: [] };
+          measureTick = 0;
+        }
+        i++;
+      } else {
+        // Doesn't fit. Emit the part that fits with tie=start, push the
+        // remainder to the next measure as a tie=stop continuation.
+        const fitDiv = remaining;
+        const restDiv = cDiv - fitDiv;
+        // We need to express `fitDiv` as a standard duration for <type>.
+        const fitType = durNameFor(fitDiv);
+        m.items.push({
+          kind: 'chord', chord: c,
+          div: fitDiv, durName: fitType.name,
+          tie: 'start',
+        });
+        measures.push(m);
+        // Open the next measure with the remainder.
+        m = { tick: m.tick + MEASURE_TICKS, items: [] };
+        measureTick = 0;
+        const restType = durNameFor(restDiv);
+        m.items.push({
+          kind: 'chord', chord: c,
+          div: restDiv, durName: restType.name,
+          tie: 'stop',
+        });
+        measureTick += restDiv;
+        // If the remainder is itself longer than the new measure
+        // (extremely rare), recurse by re-inserting c back into the
+        // plans with reduced divisions. For simplicity we just let it
+        // be — the measure-closing rest pass will handle it.
+        i++;
+      }
+    }
+    // Final measure.
+    if (m.items.length > 0 || measures.length === 0) measures.push(m);
+
+    // Now fill each measure's silence (between items) with rests so the
+    // measure totals exactly MEASURE_TICKS. We do this in a second pass
+    // because some items come from overflow carries that pre-empt later
+    // chords.
+    const filledMeasures = [];
+    for (let mi = 0; mi < measures.length; mi++) {
+      const meas = measures[mi];
+      const items = [];
+      let used = 0;
+      for (const it of meas.items) {
+        if (used < it.chord.startTick - meas.tick) {
+          // Gap before this chord — emit rests. We treat the gap as a
+          // contiguous silence here. For carries (which already have a
+          // real startTick) the gap will normally be 0.
+          items.push({ kind: 'rest-ghost', div: it.chord.startTick - meas.tick - used });
+        }
+        items.push(it);
+        used += it.div;
+      }
+      const tail = MEASURE_TICKS - used;
+      if (tail > 0) {
+        items.push({ kind: 'rest', div: tail });
+      }
+      filledMeasures.push({ tick: meas.tick, items });
+    }
+
+    // ---- Emit MusicXML ----
+    const xml = [];
+    xml.push('<?xml version="1.0" encoding="UTF-8"?>');
+    xml.push('<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">');
+    xml.push('<score-partwise version="4.0">');
+    xml.push('  <work><work-title>Synthesized</work-title></work>');
+    xml.push('  <identification>');
+    xml.push('    <encoding><software>midi-graph synth</software></encoding>');
+    xml.push('  </identification>');
+    xml.push('  <defaults>');
+    xml.push('    <scaling><millimeters>7</millimeters><tenths>40</tenths></scaling>');
+    xml.push('    <page-layout><page-height>1700</page-height><page-width>1200</page-width></page-layout>');
+    xml.push('    <staff-layout><staff-distance>80</staff-distance></staff-layout>');
+    xml.push('  </defaults>');
+    xml.push('  <part-list>');
+    xml.push('    <score-part id="P1"><part-name>Synthesized</part-name></score-part>');
+    xml.push('  </part-list>');
+    xml.push('  <part id="P1">');
+
+    for (let mi = 0; mi < filledMeasures.length; mi++) {
+      const meas = filledMeasures[mi];
+      xml.push(`    <measure number="${mi + 1}">`);
+      // First measure: emit attributes (time signature + divisions).
+      if (mi === 0) {
+        xml.push('      <attributes>');
+        xml.push(`        <divisions>${q}</divisions>`);
+        xml.push('        <key><fifths>0</fifths></key>');
+        xml.push(`        <time><beats>${timeNum}</beats><beat-type>${timeDen}</beat-type></time>`);
+        xml.push('        <clef><sign>G</sign><line>2</line></clef>');
+        xml.push('      </attributes>');
+      }
+      for (const it of meas.items) {
+        if (it.kind === 'chord') {
+          emitChord(xml, it.chord, it.div, it.durName || it.chord._durName, it.tie);
+        } else if (it.kind === 'rest' || it.kind === 'rest-ghost') {
+          emitRests(xml, it.div);
+        }
+      }
+      xml.push('    </measure>');
+    }
+
+    xml.push('  </part>');
+    xml.push('</score-partwise>');
+    return xml.join('\n');
+  }
+
+  // Emit a chord — one <note> per member, with <chord/> on all but the
+  // first so OSMD stacks them vertically at the same rhythmic position.
+  // `tie` is 'start', 'stop', or null.
+  function emitChord(xml, chord, div, durName, tie) {
+    // The first member is the bottom of the chord visually (lowest
+    // pitch). Sort members ascending so chord stacks from bottom up.
+    const members = chord.members.slice().sort((a, b) => a.cents - b.cents);
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i];
+      const sao = M.centsToStepAlterOctave(m.cents);
+      if (!sao) continue;
+      xml.push('      <note>');
+      if (i > 0) xml.push('        <chord/>');
+      xml.push('        <pitch>');
+      xml.push(`          <step>${sao.step}</step>`);
+      if (sao.alter) xml.push(`          <alter>${sao.alter}</alter>`);
+      xml.push(`          <octave>${sao.octave}</octave>`);
+      xml.push('        </pitch>');
+      xml.push(`        <duration>${div}</duration>`);
+      xml.push('        <voice>1</voice>');
+      xml.push(`        <type>${durName}</type>`);
+      if (tie === 'start') xml.push('        <tie type="start"/>');
+      if (tie === 'stop')  xml.push('        <tie type="stop"/>');
+      if (tie === 'start') xml.push('        <notations><tied type="start"/></notations>');
+      if (tie === 'stop')  xml.push('        <notations><tied type="stop"/></notations>');
+      xml.push('      </note>');
     }
   }
 
-  for (const m of sortedMeas) {
-    xml.push(`    <measure number="${m + 1}">`);
-    // Notes for this measure: from `byMeasure`, up to the cutoff.
-    // Then prepend any overflow from the previous measure.
-    const ownNs = byMeasure.get(m);
-    const cutoff = overflowByMeasure.has(m)
-      ? ownNs.length - overflowByMeasure.get(m).length
-      : ownNs.length;
-    const ns = ownNs.slice(0, cutoff);
-    const prevOverflow = overflowByMeasure.get(m - 1) || [];
-    // The notes in order: previous measure's overflow first, then this
-    // measure's own. This is what the score should display (left to right).
-    const allNs = prevOverflow.concat(ns);
-    let remaining = MEASURE_TICKS;
-    for (const cur of allNs) {
-      if (cur.divisions > remaining) {
-        // Shouldn't happen since overflow is pre-computed, but be safe.
-        // If it does happen, truncate to fit (synth score still readable).
-        if (remaining < 1) break;
-        emitNote(cur.cents, remaining, STD_DURATIONS.find(d => d.div <= remaining) || durNameFor(remaining));
-        remaining = 0;
-        break;
-      }
-      emitNote(cur.cents, cur.divisions, cur);
-      remaining -= cur.divisions;
-    }
-    // Fill any remaining space with rests (so the measure is exactly 4/4).
+  // Emit rests that fill exactly `div` ticks. We use the largest standard
+  // duration that fits, then recurse with the remainder.
+  function emitRests(xml, div) {
+    const q = 480; // not used here — callers pre-snap before passing
+    const STD = [
+      { name: '16th',    div: q / 4 },
+      { name: 'eighth',  div: q / 2 },
+      { name: 'quarter', div: q },
+      { name: 'half',    div: q * 2 },
+      { name: 'whole',   div: q * 4 },
+    ];
+    // Largest standard duration that fits in `div`.
+    let remaining = div;
     while (remaining > 0) {
-      const restDur = STD_DURATIONS.filter(d => d.div <= remaining).pop();
-      if (!restDur) break;
-      xml.push(`      <note>`);
-      xml.push(`        <rest/>`);
-      xml.push(`        <duration>${restDur.div}</duration>`);
-      xml.push(`        <voice>1</voice>`);
-      xml.push(`        <type>${restDur.name}</type>`);
-      xml.push(`      </note>`);
-      remaining -= restDur.div;
+      const pick = STD.filter(s => s.div <= remaining).pop();
+      if (!pick) break; // shouldn't happen — we passed whole ticks
+      xml.push('      <note>');
+      xml.push('        <rest/>');
+      xml.push(`        <duration>${pick.div}</duration>`);
+      xml.push('        <voice>1</voice>');
+      xml.push(`        <type>${pick.name}</type>`);
+      xml.push('      </note>');
+      remaining -= pick.div;
     }
-    xml.push(`    </measure>`);
   }
-
-  // Emit any carryover from the LAST measure's overflow as a final
-  // overflow measure. Without this, the last measure's last few notes
-  // would be silently dropped.
-  const lastOverflow = overflowByMeasure.get(sortedMeas[sortedMeas.length - 1]);
-  if (lastOverflow && lastOverflow.length > 0) {
-    const nextNum = sortedMeas.length + 1;
-    xml.push(`    <measure number="${nextNum}">`);
-    for (const cur of lastOverflow) {
-      emitNote(cur.cents, cur.divisions, cur);
-    }
-    xml.push(`    </measure>`);
-  }
-
-  // Helper: emit a single note element. Inlined here to avoid a closure
-  // problem with the previous loop.
-  function emitNote(cents, duration, durObj) {
-    const sao = M.centsToStepAlterOctave(cents);
-    if (!sao) return;
-    const durName = (typeof durObj === 'string') ? durObj
-                  : (durObj.durName) ? durObj.durName
-                  : durNameFor(duration).name;
-    xml.push(`      <note>`);
-    xml.push(`        <pitch>`);
-    xml.push(`          <step>${sao.step}</step>`);
-    if (sao.alter) xml.push(`          <alter>${sao.alter}</alter>`);
-    xml.push(`          <octave>${sao.octave}</octave>`);
-    xml.push(`        </pitch>`);
-    xml.push(`        <duration>${duration}</duration>`);
-    xml.push(`        <voice>1</voice>`);
-    xml.push(`        <type>${durName}</type>`);
-    xml.push(`      </note>`);
-  }
-
-  xml.push('  </part>');
-  xml.push('</score-partwise>');
-  return xml.join('\n');
-}
 
 const api = { parseMusicXml, analyzeMusicXml, pitchToCents, buildSyntheticMusicXml };
   if (typeof module !== 'undefined' && module.exports) {

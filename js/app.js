@@ -128,7 +128,11 @@
     // the melody.
     let sheetRendered = false;
     try {
-      const syntheticXml = M.buildSyntheticMusicXml(result.events, result.ticksPerQuarter);
+      // Pass the full analyze result so the synth can pick the best
+      // track and use the file's declared time signature instead of
+      // always defaulting to 4/4. (Old signature (events, ticksPerQuarter)
+      // still works for back-compat with direct callers / tests.)
+      const syntheticXml = M.buildSyntheticMusicXml(result);
       if (M.isSheetAvailable()) {
         sheetPanel.classList.remove('hidden');
         await M.renderSheet(sheetContainer, syntheticXml);
