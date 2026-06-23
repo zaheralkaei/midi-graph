@@ -310,6 +310,84 @@ test('detectFileType: empty or too-small file', () => {
   assertEqual(r2.reason, 'file too small to sniff');
 });
 
+// ---------------------------------------------------------------------------
+// extractMxl — unzip a .mxl (compressed MusicXML) and return the rootfile
+// content as a UTF-8 string. Uses fflate under the hood, available both as
+// a browser global and as a node require.
+// ---------------------------------------------------------------------------
+test('extractMxl: examples/quartertones.mxl round-trips to examples/quartertones.musicxml', () => {
+  const mxlPath = path.join(__dirname, '..', 'examples', 'quartertones.mxl');
+  const xmlPath = path.join(__dirname, '..', 'examples', 'quartertones.musicxml');
+  if (!fs.existsSync(mxlPath)) {
+    // Skip gracefully if the example .mxl hasn't been generated yet.
+    // (Run scripts/make-quartertones-mxl.py to create it.)
+    return;
+  }
+  const mxlBytes = new Uint8Array(fs.readFileSync(mxlPath));
+  const errs = {};
+  const xmlText = m.extractMxl(mxlBytes, errs);
+  assert(xmlText, 'extractMxl should return a string, got null. reason: ' + errs.reason);
+  assert(xmlText.indexOf('<score-partwise') >= 0,
+    'extracted XML should contain the score-partwise root, got first 200 chars: ' +
+    xmlText.substring(0, 200));
+  // The extracted XML should be identical (byte-for-byte after UTF-8 decode)
+  // to the source .musicxml file.
+  const expected = fs.readFileSync(xmlPath, 'utf-8');
+  assertEqual(xmlText, expected);
+});
+test('extractMxl: returns null with helpful reason for non-ZIP bytes', () => {
+  const errs = {};
+  const result = m.extractMxl(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]), errs);
+  assertEqual(result, null);
+  assert(errs.reason, 'errors.reason should be set');
+  assert(errs.reason.indexOf('ZIP') >= 0 || errs.reason.indexOf('zip') >= 0,
+    `reason should mention ZIP, got: ${errs.reason}`);
+});
+test('extractMxl: returns null for ZIP missing META-INF/container.xml', () => {
+  // Build a minimal ZIP using node's zlib for the deflate stream, but skip
+  // the container — only include score.xml.
+  const fflate = require('fflate');
+  const fileData = { 'score.xml': new Uint8Array([60, 63, 120, 109, 108]) };
+  const zipped = fflate.zipSync(fileData);
+  const errs = {};
+  const result = m.extractMxl(zipped, errs);
+  assertEqual(result, null);
+  assert(errs.reason.indexOf('container.xml') >= 0,
+    `reason should mention container.xml, got: ${errs.reason}`);
+});
+test('extractMxl: returns null for ZIP where container points to nonexistent file', () => {
+  const fflate = require('fflate');
+  const container = '<?xml version="1.0"?><container><rootfiles>' +
+    '<rootfile full-path="missing.xml"/></rootfiles></container>';
+  const fileData = {
+    'META-INF/container.xml': new TextEncoder().encode(container),
+    'score.xml': new TextEncoder().encode('<score/>'),
+  };
+  const zipped = fflate.zipSync(fileData);
+  const errs = {};
+  const result = m.extractMxl(zipped, errs);
+  assertEqual(result, null);
+  assert(errs.reason.indexOf('missing.xml') >= 0 || errs.reason.indexOf('not in archive') >= 0,
+    `reason should mention missing.xml, got: ${errs.reason}`);
+});
+test('extractMxl: finds container.xml at non-canonical path (fallback)', () => {
+  // Some exporters put the container somewhere other than META-INF/.
+  // Our fallback searches for any file ending in container.xml.
+  const fflate = require('fflate');
+  const container = '<?xml version="1.0"?><container><rootfiles>' +
+    '<rootfile full-path="score.xml"/></rootfiles></container>';
+  const fileData = {
+    'weird/path/container.xml': new TextEncoder().encode(container),
+    'score.xml': new TextEncoder().encode('<score-partwise/>'),
+  };
+  const zipped = fflate.zipSync(fileData);
+  const errs = {};
+  const result = m.extractMxl(zipped, errs);
+  assertEqual(result, '<score-partwise/>');
+  assertEqual(errs.reason, undefined,
+    'no error reason expected for valid fallback layout');
+});
+
 function assertNotEqual(a, b) {
   if (a === b) throw new Error(`expected ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
 }

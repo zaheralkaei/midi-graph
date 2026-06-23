@@ -515,6 +515,73 @@ function detectFileType(bytes, filename) {
 }
 
 // ---------------------------------------------------------------------------
+// .mxl extraction: compressed MusicXML is a ZIP archive. The ZIP contains
+// at minimum `META-INF/container.xml`, which points to the root MusicXML
+// file (often named score.xml or music.xml). This function unzips, reads
+// the container, then returns the rootfile content as a UTF-8 string.
+//
+// fflate is the unzip library — loaded via a <script> tag in index.html so
+// it becomes `window.fflate`. In node tests we require it via npm (same
+// module name) so the path is identical between test and browser code.
+// Returns null on any failure (bad zip, missing container, no rootfile,
+// fflate unavailable) and writes a one-line reason to a passed-in error
+// object so app.js can show it to the user.
+// ---------------------------------------------------------------------------
+function extractMxl(bytes, errors) {
+  // Resolve fflate: in node it's `require('fflate')`, in browser it's the
+  // global set by the script tag in index.html. If neither is available,
+  // the error message tells the user to reload the page.
+  let fflateLib;
+  if (typeof fflate !== 'undefined') {
+    fflateLib = fflate;
+  } else if (typeof require !== 'undefined') {
+    try { fflateLib = require('fflate'); } catch (e) { /* fall through */ }
+  }
+  if (!fflateLib) {
+    errors.reason = 'fflate library not loaded (reload the page)';
+    return null;
+  }
+  // fflate.unzipSync returns { [filename]: Uint8Array }. Wrapped in
+  // try/catch because malformed zips throw (not return null).
+  let entries;
+  try {
+    entries = fflateLib.unzipSync(bytes);
+  } catch (e) {
+    errors.reason = 'not a valid ZIP archive: ' + e.message;
+    return null;
+  }
+  // The container is conventionally META-INF/container.xml (always present
+  // per the MusicXML spec). Some exporters put it elsewhere — fall back to
+  // any file matching *container.xml if the canonical path is missing.
+  let containerPath = 'META-INF/container.xml';
+  if (!entries[containerPath]) {
+    const match = Object.keys(entries).find(k => k.endsWith('container.xml'));
+    if (!match) {
+      errors.reason = 'no META-INF/container.xml in .mxl archive';
+      return null;
+    }
+    containerPath = match;
+  }
+  // Parse the container XML to find the rootfile path. We use the DOMParser
+  // in browser and @xmldom/xmldom in node — but to keep this dependency-
+  // free, just regex for `full-path="..."` which is the only attribute that
+  // matters. (Multiple rootfiles are allowed but uncommon; we take the
+  // first.)
+  const containerText = new TextDecoder('utf-8').decode(entries[containerPath]);
+  const rootMatch = containerText.match(/full-path="([^"]+)"/);
+  if (!rootMatch) {
+    errors.reason = 'no <rootfile> element in container.xml';
+    return null;
+  }
+  const rootPath = rootMatch[1];
+  if (!entries[rootPath]) {
+    errors.reason = 'rootfile "' + rootPath + '" not in archive';
+    return null;
+  }
+  return new TextDecoder('utf-8').decode(entries[rootPath]);
+}
+
+// ---------------------------------------------------------------------------
 // Exports — CommonJS for node tests, globals for browser <script> tag.
 // ---------------------------------------------------------------------------
 const api = {
@@ -533,6 +600,7 @@ const api = {
   ticksToSecondsSegments,
   analyzeMidi,
   detectFileType,
+  extractMxl,
 };
 
 if (typeof module !== 'undefined' && module.exports) {

@@ -185,13 +185,17 @@
       const text = new TextDecoder('utf-8').decode(bytes);
       await loadMusicXmlText(text, file.name);
     } else if (detected.type === 'mxl') {
-      // Compressed MusicXML — recognized but not yet parsed. Give a
-      // helpful error so the user knows the app sees the format but
-      // can't unpack it (yet).
-      const msg = 'Compressed MusicXML (.mxl) detected — not yet supported. ' +
-        'Re-export as uncompressed .musicxml from your notation software.';
-      showError(msg);
-      playbackInfo.textContent = msg;
+      // Compressed MusicXML: unzip, read META-INF/container.xml to find the
+      // rootfile path, extract that, then parse as MusicXML.
+      const errs = {};
+      const xmlText = M.extractMxl(bytes, errs);
+      if (!xmlText) {
+        const msg = 'Could not read .mxl archive: ' + (errs.reason || 'unknown error');
+        showError(msg);
+        playbackInfo.textContent = msg;
+        return;
+      }
+      await loadMusicXmlText(xmlText, file.name);
     } else {
       // Unknown — show the reason, which already includes the helpful hint
       // based on the file's extension.

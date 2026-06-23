@@ -18,6 +18,12 @@
   <script src="vendor/opensheetmusicdisplay.min.js"
           onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.7/build/opensheetmusicdisplay.min.js';"></script>
 
+  <!-- fflate — unzip .mxl (compressed MusicXML) files. Bundled locally with
+       jsdelivr fallback, like the other vendor scripts. Only loaded when an
+       .mxl is actually uploaded (we don't use it for anything else). -->
+  <script src="vendor/fflate.min.js"
+          onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js';"></script>
+
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
