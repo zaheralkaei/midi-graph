@@ -341,19 +341,20 @@ test('chordSequence: quarter-tone triad gets literal-spelling label', () => {
     'label is NOT a 12-TET triad, got: ' + windows[0].label);
 });
 
-test('chordSequence: C + D# half-sharp + G → descriptive label', () => {
-  // The standard Arabic-maqam-style chord: a major triad with its
-  // third lowered by 50¢. In sharp-spelled form, that's C + D#↑ + G
-  // (D#↑ is enharmonic to E half-flat).
+test('chordSequence: C + E half-flat + G → "C neutral triad"', () => {
+  // The standard Arabic-maqam neutral triad: a major triad with its
+  // third lowered by 50¢. Under the new flat-spelled enharmonic
+  // convention, 6350¢ spells as "E half-flat 4" (not "D#↑4"), so
+  // the chord IS a neutral triad by the shape matcher.
   //
-  // The labeler uses LETTER-distance description, not enharmonic
-  // distance — so this chord gets labeled "C (raised 2nd, 5th)" rather
-  // than "neutral 3rd". This is a deliberate convention: the user sees
-  // the literal spelling (D#↑) elsewhere in the app, and the chord
-  // label describes what they wrote by LETTER position.
+  // We added an explicit neutral-triad template in this round — the
+  // user's design decision: "for typical microtonal chords we mainly
+  // need the neutral triad". Other microtonal chord shapes (e.g.
+  // half-flat 5th + 3rd, neutral 6th chord) still fall through to the
+  // descriptive labeler.
   const events = [
     { type: 'on',  timeTicks: 0,    note: 6000, vel: 80 },  // C4
-    { type: 'on',  timeTicks: 0,    note: 6350, vel: 80 },  // D# half-sharp 4
+    { type: 'on',  timeTicks: 0,    note: 6350, vel: 80 },  // E half-flat 4 (6350¢)
     { type: 'on',  timeTicks: 0,    note: 6700, vel: 80 },  // G4
     { type: 'off', timeTicks: 480,  note: 6000, vel: 0 },
     { type: 'off', timeTicks: 480,  note: 6350, vel: 0 },
@@ -361,12 +362,27 @@ test('chordSequence: C + D# half-sharp + G → descriptive label', () => {
   ];
   const windows = m.chordSequence(events, { ticksPerQuarter: 480 });
   assertEqual(windows[0].hasQuarterTone, true, 'flag set');
-  // Verify the label is descriptive (mentions "raised" or "neutral" or "lowered")
-  // and references the bass letter (C).
-  assert(windows[0].label.startsWith('C'),
-    'label starts with C (root), got: ' + windows[0].label);
-  assert(/raised|neutral|lowered/.test(windows[0].label),
-    'label is descriptive, got: ' + windows[0].label);
+  assertEqual(windows[0].label, 'C neutral triad',
+    'neutral triad template label, got: ' + windows[0].label);
+});
+
+test('chordSequence: C neutral triad 1st inversion → "C neutral triad/E half-flat"', () => {
+  // 1st inversion: E half-flat is the lowest SOUNDING pitch, the
+  // 5th (G) and the root (C in next octave) are above. The root is
+  // still C — just in a different octave. The matcher correctly
+  // identifies the chord as a C neutral triad and appends the bass
+  // suffix for the inversion.
+  const events = [
+    { type: 'on',  timeTicks: 0,    note: 6350, vel: 80 },  // E half-flat 4 (bass)
+    { type: 'on',  timeTicks: 0,    note: 6700, vel: 80 },  // G4
+    { type: 'on',  timeTicks: 0,    note: 7200, vel: 80 },  // C5 (root in next octave)
+    { type: 'off', timeTicks: 480,  note: 6350, vel: 0 },
+    { type: 'off', timeTicks: 480,  note: 6700, vel: 0 },
+    { type: 'off', timeTicks: 480,  note: 7200, vel: 0 },
+  ];
+  const windows = m.chordSequence(events, { ticksPerQuarter: 480 });
+  assertEqual(windows[0].label, 'C neutral triad/E half-flat',
+    '1st-inversion label, got: ' + windows[0].label);
 });
 
 // ---------------------------------------------------------------------------

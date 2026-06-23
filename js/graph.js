@@ -87,17 +87,26 @@
   //   (-?\d+)$                      - octave number (negative for sub-audio)
   function pitchOf(id) {
     if (id == null) return 6000;
-    // Match either the short form (C↑4) or the legacy long form
-    // (C half-sharp 4 / C half-flat 4). Both alternatives are wrapped in
-    // non-capturing groups so the octave capture (m[2]) is consistent
-    // regardless of which form matched.
-    const m = id.match(/^([A-G][#]?)(?:\u2191| (?:half-(?:sharp|flat)) )?(-?\d+)$/);
+    // Match the display forms produced by centsToPitch / centsToStepAlterOctave:
+    //   short form:   "C↑4", "C#4", "E half-flat 4"
+    //   legacy form:  "D#↑4" (still accepted for backward compat)
+    // Three matching groups: letter (with optional sharp), alteration
+    // (either `↑`, `half-sharp `, `half-flat `, or empty), octave.
+    const m = id.match(/^([A-G][#]?)(?:\u2191| half-sharp | half-flat )?(-?\d+)$/);
     if (!m) return 6000;
     const pc = SHARP_SCALE_NAMES.indexOf(m[1]);
     if (pc < 0) return 6000;
     const octave = parseInt(m[2], 10);
-    const isQuarter = m[1] && (id.indexOf('\u2191') >= 0 || /half-/.test(id));
-    const centsInOctave = pc * 100 + (isQuarter ? 50 : 0);
+    // Determine alteration:
+    //   legacy `↑` suffix (old display)           → +50
+    //   `half-sharp ` (new display, no flat equiv) → +50
+    //   `half-flat `                              → -50
+    //   neither                                    →   0
+    let centsInOctave = pc * 100;
+    if (id.indexOf('half-flat') >= 0) centsInOctave -= 50;
+    else if (id.indexOf('\u2191') >= 0 || id.indexOf('half-sharp') >= 0) centsInOctave += 50;
+    // Wrap into [0, 1200).
+    centsInOctave = ((centsInOctave % 1200) + 1200) % 1200;
     return (octave + 1) * 1200 + centsInOctave;
   }
 

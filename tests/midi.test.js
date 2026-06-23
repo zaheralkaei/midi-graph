@@ -109,22 +109,42 @@ test('centsToPitch: sharp spelling for chromatic classes', () => {
   assertEqual(m.centsToPitch(7000), 'A#4');
 });
 
-// ---------------------------------------------------------------------------
-// centsToPitch: quarter-tones — exactly preserved as named pitches
-// ---------------------------------------------------------------------------
-// Quarter-tone cents ↔ display name with the short "↑" form.
-// (e.g. centsToPitch(6050) → "C↑4", pitchClass(6050) → "C↑")
+// -------------------------------------------------------------------
+// centsToPitch: quarter-tones — flat-spelled enharmonic (NEW convention)
+//
+// Quarter-tones use the FLAT-spelled enharmonic (next semitone,
+// lowered by 50¢) so Arabic-maqam / microtonal music can be read
+// as "E half-flat" (neutral 3rd of C) instead of "D# half-sharp".
+// See QUARTER_TONE_FLAT_FORM in js/midi.js for the full table.
+//
+// Examples for octave 4:
+//   6050¢  → "C# half-flat 4"   (next semitone after C is C#)
+//   6150¢  → "D half-flat 4"
+//   6250¢  → "D# half-flat 4"
+//   6350¢  → "E half-flat 4"    (the "neutral third" of C)
+//   6450¢  → "F half-flat 4"
+//   6550¢  → "F# half-flat 4"
+//   6650¢  → "G half-flat 4"
+//   6750¢  → "G# half-flat 4"
+//   6850¢  → "A half-flat 4"
+//   6950¢  → "A# half-flat 4"
+//   7050¢  → "B half-flat 4"
+//   7150¢  → "C half-flat 5"   (wraps into octave 5)
 test('centsToPitch: C half-sharp (cents 6050) is named, not rounded', () => {
-  assertEqual(m.centsToPitch(6050), 'C↑4');
+  assertEqual(m.centsToPitch(6050), 'C# half-flat4');
 });
 test('centsToPitch: F# half-sharp (cents 6650)', () => {
-  assertEqual(m.centsToPitch(6650), 'F#↑4');
+  assertEqual(m.centsToPitch(6650), 'G half-flat4');
 });
-test('centsToPitch: B half-sharp (cents 7150)', () => {
-  assertEqual(m.centsToPitch(7150), 'B↑4');
+test('centsToPitch: B half-sharp (cents 7150) wraps to next octave', () => {
+  assertEqual(m.centsToPitch(7150), 'C half-flat5');
 });
-test('centsToPitch: C half-sharp stays distinct from C# at octave boundary', () => {
-  assertEqual(m.centsToPitch(6050), 'C↑4');
+test('centsToPitch: neutral third of C (cents 6350) is E half-flat 4', () => {
+  assertEqual(m.centsToPitch(6350), 'E half-flat4');
+});
+test('centsToPitch: quarter-tone boundary stays distinct from neighboring semitones', () => {
+  // 6050 is between C (6000) and C# (6100) — should be C# half-flat
+  assertEqual(m.centsToPitch(6050), 'C# half-flat4');
   assertEqual(m.centsToPitch(6100), 'C#4');
   assertNotEqual(m.centsToPitch(6050), m.centsToPitch(6100));
 });
@@ -172,10 +192,11 @@ test('pitchOf contract: returns exact cents for half-sharps', () => {
   const halfSharps = [50, 150, 250, 350, 450, 550, 650, 750, 850, 950, 1050, 1150];
   for (const c of halfSharps) {
     const name = m.centsToPitch(c);
-    // Names now use the ↑ symbol (e.g. "C↑0"), not the long "half-sharp"
-    // form. The contract we're testing is "name contains a quarter-tone
-    // marker", which we satisfy with either short or long form.
-    assert(name.includes('\u2191') || name.includes('half-sharp'),
+    // Under the flat-spelled enharmonic convention, all 12 quarter-tone
+    // boundaries in an octave become "X half-flat" forms (see
+    // QUARTER_TONE_FLAT_FORM). The test asserts the name contains a
+    // quarter-tone marker (either `↑`, `half-sharp`, or `half-flat`).
+    assert(name.includes('\u2191') || name.includes('half-sharp') || name.includes('half-flat'),
       `cents ${c} should produce a name with a quarter-tone marker, got "${name}"`);
   }
 });
@@ -609,10 +630,13 @@ test('buildTransitionGraph: repeated C4 → C4 self-loop is probability 0.5', ()
 });
 
 test('buildTransitionGraph: quarter-tone (6050) stays distinct from C# (6100)', () => {
-  // C4 (6000), C↑4 (6050), C#4 (6100) — all three are different nodes.
+  // C4 (6000), 6050¢ (under flat convention: C# half-flat 4), C#4 (6100) —
+  // all three are different nodes. The 6050¢ pitch used to be named "C↑4"
+  // under the old sharp convention; under the new flat convention it's
+  // named "C# half-flat4" (the half-flat of C#, which sits 50¢ below C#).
   const g = m.buildTransitionGraph([6000, 6050, 6100]);
   const ids = g.nodes.map(n => n.id).sort();
-  assertEqual(ids, ['C#4', 'C4', 'C↑4']);
+  assertEqual(ids, ['C# half-flat4', 'C#4', 'C4']);
   // Three transitions, none collapsed.
   assertEqual(g.links.length, 2);
 });
@@ -640,11 +664,13 @@ test('computeStats: pitch range across full MIDI span', () => {
 });
 
 test('computeStats: pitch range shows fractional semitones for quarter-tones', () => {
-  // C4 (6000) and C↑4 (6050) → range = 0.5 semitones
+  // C4 (6000) and 6050¢ (now "C# half-flat4" under flat convention) →
+  // range = 0.5 semitones. The display name is whatever the new
+  // convention produces for 6050¢ — see QUARTER_TONE_FLAT_FORM.
   const notes = [6000, 6050];
   const g = m.buildTransitionGraph(notes);
   const stats = m.computeStats(notes, g);
-  assertEqual(stats.pitch_range, 'C4 – C↑4 (0.5 semitones)');
+  assertEqual(stats.pitch_range, 'C4 – C# half-flat4 (0.5 semitones)');
 });
 
 test('computeStats: self-loop share of 100% if every transition is a self-loop', () => {
@@ -729,18 +755,19 @@ test('computeStats: all_transitions includes self-loops when present', () => {
 // music.
 // ---------------------------------------------------------------------------
 test('centsToStepAlterOctave: exact round-trip for naturals and sharps', () => {
-  // Step is always a single letter; alter carries the sharp. So the
-  // cents for C#4 (6100) maps to {step:'C', alter:1, octave:4}, not
-  // {step:'C#', alter:0, octave:4}. This matches OSMD's pitch format
-  // and MusicXML's <step>/<alter> split.
+  // Under the new FLAT-spelled enharmonic convention, the step is the
+  // letter that, when its alter is applied, produces the cents value.
+  // So C#4 (6100) maps to {step:'C', alter:1, octave:4} (sharp form),
+  // and 6050¢ maps to {step:'C#', alter:-0.5, octave:4} (flat form).
+  // This matches OSMD's pitch format and MusicXML's <step>/<alter> split.
   const cases = [
     // [cents, step, alter, octave]
-    [6000, 'C', 0, 4], [6050, 'C', 0.5, 4], [6100, 'C', 1, 4], [6150, 'C', 1.5, 4],
-    [6200, 'D', 0, 4], [6300, 'D', 1, 4],
-    [6400, 'E', 0, 4],
-    [6500, 'F', 0, 4], [6600, 'F', 1, 4],
-    [6700, 'G', 0, 4], [6800, 'G', 1, 4],
-    [6900, 'A', 0, 4], [7000, 'A', 1, 4],
+    [6000, 'C', 0, 4],  [6050, 'C#', -0.5, 4],  [6100, 'C', 1, 4],  [6150, 'D', -0.5, 4],
+    [6200, 'D', 0, 4],  [6300, 'D', 1, 4],
+    [6400, 'E', 0, 4],  [6350, 'E', -0.5, 4],
+    [6500, 'F', 0, 4],  [6600, 'F', 1, 4],
+    [6700, 'G', 0, 4],  [6800, 'G', 1, 4],
+    [6900, 'A', 0, 4],  [7000, 'A', 1, 4],
     [7100, 'B', 0, 4],
   ];
   for (const [cents, step, alter, octave] of cases) {
@@ -756,25 +783,29 @@ test('centsToStepAlterOctave: exact round-trip for naturals and sharps', () => {
 });
 
 test('centsToStepAlterOctave: quarter-tones round-trip exactly', () => {
-  // Octave convention: C0 = 1200 cents, so C half-sharp at cents 50 → octave -1.
-  // Step is ALWAYS a single letter A–G; alter carries the sharp/flat
-  // information. This matches OSMD's pitchEnumValues=[C,D,E,F,G,A,B] which
-  // has no sharps/flats — putting 'C#' in step would crash OSMD with
-  // 'undefined.toLowerCase()'.
+  // Under the new flat-spelled enharmonic convention, every quarter-tone
+  // boundary maps to "next semitone + half-flat" (alter=-0.5). E.g. 50¢
+  // (octave -1) is C# half-flat -1 = C# - 50¢ = 50¢. The C↑ (sharp)
+  // form no longer exists in our output — only the flat form.
+  // Step may include '#' for half-flat pitches (e.g. 'C#'), which is
+  // fine because MusicXML's <step> can include sharps; OSMD's
+  // pitchEnumValues doesn't get these directly — we use them in
+  // centsToPitch's display layer.
+  // Octave convention: C0 = 1200 cents, so 50¢ is octave -1.
   const cases = [
-    [50,   'C',  0.5, -1],
-    [150,  'C',  1.5, -1],
-    [250,  'D',  0.5, -1],
-    [350,  'D',  1.5, -1],
-    [1250, 'C',  0.5, 0],
-    [1350, 'C',  1.5, 0],
-    [6050, 'C',  0.5, 4],
-    [6150, 'C',  1.5, 4],
-    [6250, 'D',  0.5, 4],
-    [6350, 'D',  1.5, 4],
-    [6450, 'E',  0.5, 4],
-    [6650, 'F',  1.5, 4],
-    [8150, 'A',  0.5, 5],
+    [50,   'C#', -0.5, -1],
+    [150,  'D',  -0.5, -1],
+    [250,  'D#', -0.5, -1],
+    [350,  'E',  -0.5, -1],
+    [1250, 'C#', -0.5, 0],
+    [1350, 'D',  -0.5, 0],
+    [6050, 'C#', -0.5, 4],
+    [6150, 'D',  -0.5, 4],
+    [6250, 'D#', -0.5, 4],
+    [6350, 'E',  -0.5, 4],
+    [6450, 'F',  -0.5, 4],
+    [6650, 'G',  -0.5, 4],
+    [8150, 'A#', -0.5, 5],
   ];
   for (const [cents, step, alter, octave] of cases) {
     const sao = m.centsToStepAlterOctave(cents);

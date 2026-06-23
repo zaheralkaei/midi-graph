@@ -78,6 +78,46 @@ const QUARTER_TONE_NAMES = [
   { cents: 1150, name: 'B↑' },
 ];
 
+// Quarter-tone FLAT spelling. The "next semitone" rule: at each
+// quarter-tone boundary, the flat-spelled form is the next 12-TET
+// semitone (not the next LETTER) lowered by 50¢. For example:
+//   6350¢ = D#↑  (sharp form, letter D, alter +1.5)
+//         = E half-flat  (flat form, letter E, alter -0.5)
+//   because the next SEMITONE after D# (300¢) is E (400¢), and E - 50
+//   = 350¢ (within octave), which IS 6350¢ in absolute cents for oct 4.
+// This rule produces musically meaningful names: "E half-flat" is
+// the "neutral third" of C, "G half-flat" is the "neutral second"
+// of F, "B half-flat" is the "neutral 2nd" of A, etc. — i.e. the
+// half-flat of the NEXT LETTER, not just any semitone up.
+//
+// Sharp form   Flat form (letter, alter)   Reason
+//   50  C↑      C#, -0.5     C# half-flat
+//  150  C#↑     D,  -0.5     D half-flat
+//  250  D↑      D#, -0.5     D# half-flat
+//  350  D#↑     E,  -0.5     E half-flat  (neutral 3rd of C)
+//  450  E↑      F,  -0.5     F half-flat
+//  550  F↑      F#, -0.5     F# half-flat
+//  650  F#↑     G,  -0.5     G half-flat
+//  750  G↑      G#, -0.5     G# half-flat
+//  850  G#↑     A,  -0.5     A half-flat  (neutral 3rd of F)
+//  950  A↑      A#, -0.5     A# half-flat
+// 1050  A#↑     B,  -0.5     B half-flat
+// 1150  B↑      C,  -0.5     C half-flat
+const QUARTER_TONE_FLAT_FORM = {
+   50: { step: 'C#', alter: -0.5 },
+  150: { step: 'D',  alter: -0.5 },
+  250: { step: 'D#', alter: -0.5 },
+  350: { step: 'E',  alter: -0.5 },
+  450: { step: 'F',  alter: -0.5 },
+  550: { step: 'F#', alter: -0.5 },
+  650: { step: 'G',  alter: -0.5 },
+  750: { step: 'G#', alter: -0.5 },
+  850: { step: 'A',  alter: -0.5 },
+  950: { step: 'A#', alter: -0.5 },
+ 1050: { step: 'B',  alter: -0.5 },
+ 1150: { step: 'C',  alter: -0.5 },
+};
+
 // step+alter+octave → cents above C0. alter is in semitones (0, 0.5, 1, 1.5, ...).
 // Negative alter is also supported (e.g. alter=-0.5 = quarter-flat of the
 // note above; same as half-sharp of the note below).
@@ -101,10 +141,16 @@ function stepAlterOctaveToCents(step, alter, octave) {
 // Inverse of stepAlterOctaveToCents — for synthesizing MusicXML from MIDI
 // notes so we can render sheet music for .mid files. Uses the 24-entry
 // QUARTER_TONE_NAMES table so quarter-tones round-trip exactly:
-//   6050  → ('C', 0.5, 4)
+//   6000  → ('C',  0,   4)
+//   6050  → ('D', -0.5, 4)   ← FLAT form (was ('C', 0.5, 4) in old sharp convention)
 //   6100  → ('C#', 0,   4)
-//   6150  → ('C#', 0.5, 4)
+//   6150  → ('D', -0.5, 4)   ← FLAT form (was ('C#', 0.5, 4))
+//   6350  → ('E', -0.5, 4)   ← FLAT form (was ('D#', 0.5, 4))
 // Eighth-tones (e.g. 6025) round to the nearest quarter-tone.
+//
+// At quarter-tone boundaries the function returns the FLAT-spelled
+// enharmonic (E half-flat for 6350¢) instead of the SHARP-spelled form
+// (D#↑) — see QUARTER_TONE_FLAT_FORM and the comment block on it.
 function centsToStepAlterOctave(cents) {
   if (cents == null || !isFinite(cents) || cents < 0) return null;
   // octave = floor(cents / 1200) - 1, matching centsToPitch.
@@ -113,23 +159,27 @@ function centsToStepAlterOctave(cents) {
   const rounded = roundToNearest50(withinOctave);
   const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
   if (!match) return null;
-  // Decompose match.name → (step, alter). Names are like:
-  //   'C'    → step='C',  alter=0
-  //   'C↑'   → step='C',  alter=0.5  (half-sharp)
-  //   'C#'   → step='C',  alter=1    (full sharp)
-  //   'C#↑'  → step='C',  alter=1.5  (sharp + half-sharp)
-  // OSMD's pitchEnumValues is [C, D, E, F, G, A, B] (no sharps/flats) and
-  // expects the alter element separately. Returning step='C#' would make
-  // OSMD's pitchEnumValues.indexOf('C#') = -1 and set FundamentalNote to
-  // undefined, crashing VexFlowGraphicalSymbolFactory.pitch() with
-  // 'undefined.toLowerCase()'.
-  const isQuarter = match.name.endsWith('\u2191');
-  const hasSharp = match.name.endsWith('#') || (isQuarter && match.name.endsWith('#\u2191'));
-  if (isQuarter) {
-    // Strip the trailing ↑.
-    const base = match.name.slice(0, -1);
-    return { step: hasSharp ? base.slice(0, -1) : base, alter: hasSharp ? 1.5 : 0.5, octave };
+  // Quarter-tone enharmonic preference: at every quarter-tone boundary
+  // (e.g. 6350¢), we prefer the FLAT-spelled enharmonic (E half-flat) over
+  // the SHARP-spelled one (D#↑) because Arabic-maqam / microtonal theory
+  // names these pitches by their neutral-interval role (E half-flat is
+  // the "neutral third" of C). See QUARTER_TONE_FLAT_FORM above.
+  if (QUARTER_TONE_FLAT_FORM.hasOwnProperty(rounded)) {
+    const flat = QUARTER_TONE_FLAT_FORM[rounded];
+    // The B↑ / C half-flat boundary (within-octave 1150) is special: the
+    // flat form puts the pitch in the NEXT octave (C half-flat 5 is
+    // 7150¢, but 7150¢ is also 50¢ above B4). We prefer the higher
+    // octave for the flat form because it reads as "the start of the
+    // next octave" rather than "the end of the previous one" — which
+    // is the convention in maqam/microtonal theory.
+    let outOctave = octave;
+    if (rounded === 1150) outOctave = octave + 1;
+    return { step: flat.step, alter: flat.alter, octave: outOctave };
   }
+  // Decompose match.name → (step, alter) for the sharp form. Names are:
+  //   'C'    → step='C',  alter=0
+  //   'C#'   → step='C',  alter=1    (full sharp)
+  const hasSharp = match.name.endsWith('#');
   if (hasSharp) {
     return { step: match.name.slice(0, -1), alter: 1, octave };
   }
@@ -159,22 +209,23 @@ function centsToStepAlterOctave(cents) {
     return Math.round(divided) * 50;
   }
 
-  // cents → display name like "C4" or "C↑4" / "D#↑4".
+  // cents → display name like "C4", "C#4", "E half-flat 4" or
+  // "F#↑4" (the half-sharp case where there's no flat enharmonic).
+  // Quarter-tone boundaries use the flat-spelled enharmonic
+  // (E half-flat not D#↑) so the display matches the rest of the
+  // app's flat-spelled convention. Pure 12-TET pitches keep their
+  // canonical names.
   function centsToPitch(cents) {
     if (cents == null || !isFinite(cents)) return '?';
-    if (cents < 0) return '?';  // negative cents are unreachable through any
-                                // current parser; return a marker instead of
-                                // producing a misleading name like "?-2".
-    const octave = Math.floor(cents / 1200) - 1;
-    const withinOctave = cents - (octave + 1) * 1200;
-    const rounded = roundToNearest50(withinOctave);
-    const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
-    if (match) {
-      // Plain names ("C", "C#") concatenate with octave → "C4", "C#4".
-      // Arrow names ("C↑", "D#↑") concatenate too → "C↑4", "D#↑4".
-      return match.name + octave;
-    }
-    return `?${cents}`;
+    if (cents < 0) return '?';
+    const sao = centsToStepAlterOctave(cents);
+    if (!sao) return `?${cents}`;
+    let name = sao.step;
+    if (sao.alter === 1) name += '#';
+    else if (sao.alter === -1) name += 'b';
+    else if (sao.alter === 0.5) name += '\u2191';
+    else if (sao.alter === -0.5) name += ' half-flat';
+    return name + sao.octave;
   }
 
   // cents → just the pitch-class part (no octave). Used for the 24-class color scale.
@@ -848,6 +899,51 @@ function _labelBySpelling(pitches, bass) {
   // vocabulary to test against).
   const root = spellings[0];
   const rootName = root.sao ? _formatRoot(root.sao) : '?';
+  // Special-case 1: NEUTRAL TRIAD (the only named microtonal chord
+  // template for v1 — see user's design decision). Shape:
+  //   root + neutral 3rd + perfect 5th
+  // where neutral 3rd = (root + 350¢) and the pitch is spelled
+  // <3rd letter> half-flat (e.g. C + E half-flat + G).
+  // Intervals: 0/350/700 (in cents within an octave).
+  if (pitches.length === 3) {
+    // Try every pitch as a candidate root (so inversions are
+    // recognised). The neutral triad shape is 0/350/700 in cents
+    // from the root. We pick the candidate root whose interval set
+    // matches that shape best; ties broken by preferring the
+    // root-position match (lowest sounding pitch is the root).
+    const intervals = [0, 350, 700];
+    let bestRoot = null;
+    for (const candidateRootCents of pitches) {
+      const ivs = pitches
+        .map(p => ((p - candidateRootCents) % 1200 + 1200) % 1200)
+        .sort((a, b) => a - b);
+      if (ivs[0] === 0 && ivs[1] === 350 && ivs[2] === 700) {
+        // Prefer the candidate where bass === root (root position).
+        const isRootPos = bass === candidateRootCents;
+        if (!bestRoot || isRootPos) {
+          bestRoot = candidateRootCents;
+          if (isRootPos) break;  // best possible match
+        }
+      }
+    }
+    if (bestRoot !== null) {
+      const rootSao = centsToStepAlterOctave(bestRoot);
+      const rootName = rootSao ? _formatRoot(rootSao) : '?';
+      // Inversions: if the bass isn't the root, append "/<bass>".
+      let label = `${rootName} neutral triad`;
+      if (bass !== bestRoot) {
+        const bassSao = centsToStepAlterOctave(bass);
+        if (bassSao) label += '/' + _formatRoot(bassSao);
+      }
+      return {
+        label,
+        root: bestRoot,
+        bass,
+        intervals,
+        hasQuarterTone: true,
+      };
+    }
+  }
   // Compute each non-root pitch's alteration relative to the root's letter.
   // This is approximate — quarter-tone music doesn't have a canonical
   // "root" the way 12-TET does. We use the bass as the conventional root.
@@ -889,12 +985,16 @@ function _labelBySpelling(pitches, bass) {
   };
 }
 
-// Format a root name as just the letter + optional sharp + optional flat
-// (no octave). Used for chord labels: "C", "F#", "Bb".
+// Format a root name as just the letter + alteration (no octave).
+// Used for chord labels: "C", "F#", "Bb", "C half-flat".
+// Quarter-tones in the root get the long "half-flat" / "half-sharp"
+// form so the user can see the chord's exact spelling in the label.
 function _formatRoot(sao) {
   let name = sao.step;
   if (sao.alter === 1) name += '#';
   else if (sao.alter === -1) name += 'b';
+  else if (sao.alter === 0.5) name += '\u2191';   // short form for compactness
+  else if (sao.alter === -0.5) name += ' half-flat';
   return name;
 }
 
