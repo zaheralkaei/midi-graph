@@ -1,6 +1,8 @@
 # midi-graph
 
-Upload a MIDI or MusicXML file. Get a visual map of which notes follow which. See the sheet music. Hear it played back in the browser.
+A 100% client-side note-transition graph for MIDI and MusicXML. Upload
+a file, get a visual map of which notes follow which, see the sheet
+music, hear it played back in the browser.
 
 A note→next-note transition graph (Markov-style) is built from the parsed
 note sequence. The graph is rendered as a force-directed D3 graph you can
@@ -8,11 +10,15 @@ drag, filter, and zoom. A stats panel shows total notes, unique pitches,
 every transition sorted by probability, self-loop rate, and pitch range.
 Playback is real audio via Tone.js — the browser can't decode `.mid`
 natively, so MIDI is parsed entirely client-side. MusicXML and MIDI files
-both get a sheet-music render (MusicXML directly via OSMD; MIDI via a
-synthesized MusicXML built from the parsed events).
+both get a sheet-music render (MusicXML directly via OSMD; MIDI via
+[webmscore](https://github.com/LibreScore/webmscore), which gives you
+professional-grade engraving — proper beam grouping, voice separation,
+slurs, articulations, key signature, dynamics — the same quality you'd
+get from desktop MuseScore).
 
 **100% static.** No server, no Python, no install. The whole app is
-HTML + JS + CSS. Drag the folder onto Netlify and you're done.
+HTML + JS + CSS + a 9 MB vendored WASM bundle. Drag the folder onto
+Netlify and you're done.
 
 ---
 
@@ -298,29 +304,50 @@ library unzips; the rootfile content is decoded as UTF-8 and
 parsed by the same `js/musicxml.js` parser used for plain
 `.musicxml`.
 
-### Synthetic MusicXML for MIDI
+### Sheet music from MIDI
 
-MIDI doesn't carry notation data (no stem direction, beaming,
-articulations, dynamics, key signature, time signature — just
-timed note on/off events). To still give the user a sheet-music
-view, the synth:
+MIDI doesn't carry notation data — no stem direction, beaming,
+articulations, dynamics, key signature, time signature, just timed
+note on/off events. To still give the user a sheet-music view, the
+app takes **two** routes, picking the best one available:
 
-1. Pairs each `note_on` with its matching `note_off` to get real
+**Route 1 — webmscore (default).** [LibreScore's
+webmscore](https://github.com/LibreScore/webmscore) is MuseScore 1.x
+compiled to WebAssembly. It does a real MIDI → MusicXML conversion
+with proper engraving: beam grouping, voice separation, slurs,
+articulations, dynamic markings, key and time signatures inferred
+from the MIDI, and even reads tempo/text meta events into a
+`<work><work-title>` / `<identification><creator>` block. The Bach
+Allemande demo, for example, gets titled "Six Sonatas and Partitas
+for Solo Violin" with composer "Johann Sebastian Bach (1685-1750)"
+and tempo "♩ = 220" automatically. The 9 MB WASM bundle is
+vendored under `vendor/webmscore/` (lazy-loaded only when a MIDI
+import happens), so MXL-only users never pay the cost.
+
+**Route 2 — hand-rolled synth (fallback).** If webmscore fails to
+load, fails to convert, or the worker dies, the bridge returns
+`null` and `app.js` falls back to `buildSyntheticMusicXml()` in
+`js/musicxml.js`. The synth:
+
+1. Picks the track with the most `note_on` events (handles MIDI
+   files with melody + accompaniment + drums — we render the
+   melody, not the drums).
+2. Reads the FF 58 time-signature meta event from the MIDI (or
+   defaults to 4/4).
+3. Pairs each `note_on` with its matching `note_off` to get real
    durations.
-2. Converts each note's cents to `<step>`/`<alter>`/`<octave>`.
-3. Groups notes into 4/4 measures of 1920 ticks (4 quarters at
-   480 PPQ).
-4. Snaps each note's duration to the closest standard duration
+4. Quantizes start times to the 16th-note grid (absorbs human
+   timing jitter and dedupes re-attacks at the same position).
+5. Groups notes that share a quantized start into one MusicXML
+   chord — one `<note>` plus N-1 `<chord/>` siblings stacked
+   vertically at the same rhythmic position.
+6. Splits cross-measure durations with ties (`<tie type="start"/>`
+   in the fitting measure, `<tie type="stop"/>` in the next) rather
+   than the carryover hack that was the source of every "jammed
+   notes / wrong values" bug report.
+7. Snaps each note's duration to the closest standard duration
    (whole/half/quarter/eighth/16th) for the `<type>` element,
-   using the actual tick count for `<duration>` (which is allowed
-   to be any integer in MusicXML).
-5. Pads unused measure space with rests.
-6. **Carryover**: if a note's duration overflows the remaining
-   ticks in its measure, it's pushed onto a `carryover` list and
-   emitted at the start of the next measure. This preserves all
-   notes (a real bug was fixed here — short notes were being
-   dropped when rounding inflated the apparent duration past the
-   remaining space).
+   using the actual tick count for `<duration>`.
 
 The output is a complete MusicXML 4.0 document with
 `<work>`, `<identification>`, `<defaults>` (scaling + page-layout),
@@ -473,4 +500,18 @@ routing, the synth carryover, and the real example files.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+The project source code (everything under `js/`, `css/`, `index.html`,
+`tests/`, and `scripts/`) is MIT — see [LICENSE](LICENSE).
+
+The vendored [webmscore](https://github.com/LibreScore/webmscore)
+bundle under `vendor/webmscore/` is **GPL v3**, derived from
+MuseScore 1.x. It is dynamically loaded only when a user imports a
+MIDI file; the rest of the app (the transition graph, the parser,
+the MusicXML synth fallback, the playback engine) is MIT. Any
+combined work that exercises the MIDI-import path inherits GPL v3
+obligations. To use midi-graph in a setting where GPL v3 is
+incompatible (proprietary distribution, app-store deployment,
+etc.), remove the `vendor/webmscore/` directory and delete the
+`<script type="module" src="js/webmscore-bridge.js">` tag from
+`index.html` — the hand-rolled synth in `js/musicxml.js` will then
+take over automatically.

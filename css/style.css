@@ -23,8 +23,15 @@ h1 {
   font-weight: 500;
   letter-spacing: 0.3px;
   display: flex;
-  align-items: center;
-  gap: 0;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+h1 .title-tag {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0.2px;
 }
 .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
 
@@ -339,6 +346,13 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .info-card ul, .info-card ol {
   margin: 6px 0 8px 0;
   padding-left: 20px;
+}
+.info-card .info-credits {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.info-card .info-credits li {
+  margin-bottom: 2px;
 }
 .info-card li {
   margin: 3px 0;

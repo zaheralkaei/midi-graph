@@ -1,0 +1,55 @@
+NOTICE — third-party components and their licenses
+================================================================
+
+This project includes third-party components. The list below describes
+each, where it lives in the repo, and under what license it's distributed.
+
+
+1. webmscore — vendored under vendor/webmscore/
+   Source: https://github.com/LibreScore/webmscore
+   Version: 1.2.1
+   License: GPL v3
+   Files affected: webmscore.cdn.mjs, webmscore.local.mjs,
+                   webmscore.lib.wasm, webmscore.lib.data,
+                   webmscore.lib.mem.wasm
+
+   webmscore is a WebAssembly build of MuseScore 1.x's score-handling
+   core (libmscore). MuseScore 1.x is GPL v3; the bundled WASM
+   inherits that license.
+
+   When a user imports a MIDI file, the app loads this bundle at
+   runtime via the JS bridge in js/webmscore-bridge.js. The resulting
+   combined work for that session is subject to GPL v3 obligations
+   (source disclosure, copyleft on derivative works, etc.). A user who
+   never imports a MIDI file never executes the GPL v3 code.
+
+   The full GPL v3 text ships with the WASM bundle. A copy is
+   available at: https://www.gnu.org/licenses/gpl-3.0.txt
+
+   To use midi-graph without invoking GPL v3, remove the
+   vendor/webmscore/ directory and the <script type="module"> tag
+   that loads js/webmscore-bridge.js from index.html. The hand-rolled
+   MusicXML synth in js/musicxml.js will then take over.
+
+
+2. d3.v7.min.js — vendored under vendor/d3.v7.min.js
+   Source: https://github.com/d3/d3
+   License: ISC
+
+3. Tone.min.js — vendored under vendor/Tone.min.js
+   Source: https://github.com/Tonejs/Tone.js
+   License: MIT
+
+4. opensheetmusicdisplay.min.js — vendored under vendor/opensheetmusicdisplay.min.js
+   Source: https://github.com/opensheetmusicdisplay/opensheetmusicdisplay
+   License: BSD-3-Clause (per the project's LICENSE.md)
+
+5. fflate.min.js — vendored under vendor/fflate.min.js
+   Source: https://github.com/101arrowz/fflate
+   License: MIT
+
+
+All other source code in this repository — everything under js/, css/,
+index.html, tests/, scripts/, the LICENSE file itself, and this NOTICE
+file — is Copyright (c) 2026 Zaher Alkaei and distributed under the
+MIT License. See LICENSE for the full text.

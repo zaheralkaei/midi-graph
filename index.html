@@ -29,11 +29,10 @@
 <body>
 <div class="wrap">
   <h1>midi-graph
+    <span class="title-tag">note-transition visualizer · MIDI &amp; MusicXML</span>
     <!-- Info button — opens a modal with a quick orientation for first-time
          users. Concept and implementation by Zaher Alkaei. Keyboard
-         accessible (button can be focused and activated with Enter/Space);
-         ESC, click on the backdrop, and the explicit close button all
-         dismiss the modal. -->
+         accessible (Enter / Space activates; modal traps focus, ESC closes). -->
     <button type="button" id="info-btn" class="info-btn" aria-label="Show info about this app" aria-haspopup="dialog">ℹ</button>
   </h1>
   <p class="subtitle">Upload a MIDI or MusicXML file. See the note transition graph. Hear it played back. View the sheet music.</p>
@@ -114,13 +113,13 @@
     <button type="button" class="info-close" aria-label="Close" data-info-dismiss="1">×</button>
     <h2 id="info-modal-title">About midi-graph</h2>
 
-    <p><strong>midi-graph</strong> turns a MIDI or MusicXML file into a visual map of which notes follow which. Designed and implemented by <strong>Zaher Alkaei</strong>.</p>
+    <p><strong>midi-graph</strong> turns a MIDI or MusicXML file into a visual map of which notes follow which. Designed and implemented by <a href="https://github.com/zaheralkaei" target="_blank" rel="noopener"><strong>Zaher Alkaei</strong></a>.</p>
 
     <h3>What you get</h3>
     <ul>
       <li><strong>Transition graph</strong> — each node is a unique pitch, each arrow is a "this note is followed by that note" transition. Arrow width ∝ probability; arrow direction shows flow.</li>
       <li><strong>Stats panel</strong> — total notes, unique pitches, total transitions, self-loops + share, pitch range, <em>and every transition sorted by probability</em> (not just the top 5).</li>
-      <li><strong>Sheet music</strong> — real notation. MusicXML renders directly; MIDI files get a synthesized score from the note_on / note_off pairs.</li>
+      <li><strong>Sheet music</strong> — real notation. MusicXML renders directly; MIDI files are converted via <a href="https://github.com/LibreScore/webmscore" target="_blank" rel="noopener">webmscore</a> (MuseScore 1.x in WASM) for professional engraving — proper beam grouping, voice separation, slurs, articulations, key and time signatures.</li>
       <li><strong>Playback</strong> — hear the piece with Tone.js. Hover on the graph: notes glow when they sound. Stop works mid-piece, replay works after Stop, and the natural end also resets correctly.</li>
     </ul>
 
@@ -154,7 +153,15 @@
     <p>The file type is detected from the file's <em>contents</em> (first 4 bytes), not the extension — so a mis-named file still routes to the right parser.</p>
 
     <h3>Credits</h3>
-    <p>Concept and implementation by <strong>Zaher Alkaei</strong>. Built with <a href="https://d3js.org/" target="_blank" rel="noopener">D3 v7</a>, <a href="https://tonejs.github.io/" target="_blank" rel="noopener">Tone.js</a>, <a href="https://opensheetmusicdisplay.org/" target="_blank" rel="noopener">OpenSheetMusicDisplay</a>, and <a href="https://github.com/101arrowz/fflate" target="_blank" rel="noopener">fflate</a> — all bundled locally in <code>vendor/</code> with CDN fallbacks.</p>
+    <p>Concept and implementation by <a href="https://github.com/zaheralkaei" target="_blank" rel="noopener"><strong>Zaher Alkaei</strong></a> (<a href="https://github.com/zaheralkaei/midi-graph" target="_blank" rel="noopener">source on GitHub</a>).</p>
+    <p>Built with:</p>
+    <ul class="info-credits">
+      <li><a href="https://d3js.org/" target="_blank" rel="noopener">D3 v7</a> — transition-graph rendering and force layout (ISC)</li>
+      <li><a href="https://tonejs.github.io/" target="_blank" rel="noopener">Tone.js</a> — audio playback (MIT)</li>
+      <li><a href="https://opensheetmusicdisplay.org/" target="_blank" rel="noopener">OpenSheetMusicDisplay</a> — sheet music rendering (BSD-3-Clause)</li>
+      <li><a href="https://github.com/101arrowz/fflate" target="_blank" rel="noopener">fflate</a> — .mxl ZIP decompression (MIT)</li>
+      <li><a href="https://github.com/LibreScore/webmscore" target="_blank" rel="noopener">webmscore</a> — MuseScore 1.x compiled to WebAssembly; produces the professional-grade engraving for MIDI imports (<strong>GPL v3</strong>, see <a href="https://github.com/zaheralkaei/midi-graph/blob/main/NOTICE" target="_blank" rel="noopener">NOTICE</a>)</li>
+    </ul>
   </div>
 </div>
 
