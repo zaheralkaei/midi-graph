@@ -84,6 +84,47 @@
     </div>
   </div>
 
+  <!-- Harmonic graph panel — second graph showing CHORD progressions
+       rather than note-by-note transitions. Hidden for monophonic files
+       (where every "chord" is a single note) and for MusicXML/MXL
+       (which doesn't go through chordSequence yet). Window size is
+       user-configurable: re-running the chord classifier with a smaller
+       window captures faster harmonic rhythm; a larger window smooths
+       out passing tones. The "Melodic" graph above stays as-is. -->
+  <div class="panel hidden" id="harmonic-panel">
+    <h2>Harmonic graph
+      <span id="harmonic-source-label" class="source-label"></span>
+    </h2>
+    <div class="harmonic-notice" id="harmonic-monophonic-notice" hidden>
+      This file appears to be monophonic — no simultaneous pitches means
+      there are no chords to analyze. The melodic graph above still works.
+    </div>
+    <div class="graph-wrap">
+      <div id="harmonic-graph"></div>
+      <div class="graph-controls">
+        <label>
+          Window:
+          <select id="harmonic-window">
+            <option value="240">Eighth note</option>
+            <option value="480" selected>Quarter note</option>
+            <option value="960">Half note</option>
+          </select>
+        </label>
+        <button class="secondary" id="harmonic-zoom-in">Zoom in</button>
+        <button class="secondary" id="harmonic-zoom-out">Zoom out</button>
+        <button class="secondary" id="harmonic-reset-zoom">Reset</button>
+        <label>Min probability
+          <input type="range" id="harmonic-min-prob" min="0" max="100" value="0">
+          <span id="harmonic-min-prob-val">0%</span>
+        </label>
+      </div>
+    </div>
+    <div class="chord-sequence-panel" id="chord-sequence-panel">
+      <h3>Chord sequence</h3>
+      <ol class="transition-list" id="chord-sequence-list"></ol>
+    </div>
+  </div>
+
   <!-- Playback — placed between graph and sheet music so the user can
        play the graph they just saw, then look at the corresponding
        notation below. -->

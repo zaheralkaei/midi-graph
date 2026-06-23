@@ -42,6 +42,7 @@
   const filenameDisplay = document.getElementById('filename-display');
   const statsPanel = document.getElementById('stats-panel');
   const graphPanel = document.getElementById('graph-panel');
+  const harmonicPanel = document.getElementById('harmonic-panel');
   const sheetPanel = document.getElementById('sheet-panel');
   const statsGrid = document.getElementById('stats-grid');
   const topTransitionsEl = document.getElementById('top-transitions');
@@ -51,6 +52,7 @@
   const playbackInfo = document.getElementById('playback-info');
 
   let currentGraphController = null;
+  let currentHarmonicController = null;
   let currentPlayback = null;
   let currentResult = null;        // Phase 1: keep the analyze result so we
                                    // can re-render the graph when the user
@@ -62,6 +64,13 @@
                                    // out). The select value is the
                                    // trackIndex; the array lookup uses the
                                    // array position.
+  let currentChordWindows = null;  // Phase 3: cached chord windows used to
+                                   // re-run the classifier with a different
+                                   // windowTicks when the user changes the
+                                   // dropdown. Recomputed on demand; not
+                                   // part of the analyze result so we don't
+                                   // pay for every possible window size up
+                                   // front.
   let isPlaying = false;
 
   function resetState() {
@@ -80,6 +89,11 @@
     sheetPanel.classList.add('hidden');
     statsPanel.classList.add('hidden');
     graphPanel.classList.add('hidden');
+    harmonicPanel.classList.add('hidden');
+    if (currentHarmonicController) {
+      currentHarmonicController.destroy();
+      currentHarmonicController = null;
+    }
     playBtn.disabled = true;
     stopBtn.disabled = true;
     isPlaying = false;
@@ -216,11 +230,14 @@
     renderMelodicView();
     graphPanel.classList.remove('hidden');
 
+    // Phase 3: render the harmonic graph panel.
+    renderHarmonicView();
+
     // Wire playback callbacks so the graph glows when each pitch is sounding.
     // Guard against the controller being null in case the graph was torn down
     // (e.g. during resetState) before the callback fires.
     // Playback always uses the merged events so the user hears the whole
-    // piece — switching tracks in the picker only changes what the graph
+    // piece — switching tracks in the picker changes what the GRAPH
     // shows, not what gets played.
     currentPlayback = M.buildPlayback(result.events, result.ticksPerQuarter, {
       onNoteOn: (cents) => currentGraphController && currentGraphController.setActive(cents, true),
@@ -229,6 +246,120 @@
     playBtn.disabled = false;
     stopBtn.disabled = true;
     playbackInfo.textContent = `${currentPlayback.noteCount} notes ready. Click Play to start.`;
+  }
+
+  // Phase 3: render the harmonic graph + chord sequence panel.
+  // Shows the chord-transition graph from the current window size
+  // (default quarter note). Shows a notice instead of the graph when
+  // the file is monophonic — every chord would just be a single note
+  // and the graph wouldn't be informative. Hides the whole panel for
+  // non-MIDI files (MusicXML/MXL) since the analyze path doesn't
+  // currently compute chord sequences for them.
+  function renderHarmonicView() {
+    if (!currentResult || !M.chordSequence) return;
+    const harmonicNotice = document.getElementById('harmonic-monophonic-notice');
+    // MusicXML/MXL path doesn't include chord data in analyzeMusicXml,
+    // so the current result has no chordWindows. Hide the panel
+    // entirely rather than showing a half-empty view.
+    if (!currentResult.chordWindows && !currentResult.monophonic) {
+      harmonicPanel.classList.add('hidden');
+      return;
+    }
+    if (currentResult.monophonic) {
+      // Monophonic file — show notice, hide the graph + controls.
+      harmonicPanel.classList.remove('hidden');
+      harmonicPanel.querySelector('.graph-wrap').style.display = 'none';
+      harmonicPanel.querySelector('.chord-sequence-panel').style.display = 'none';
+      if (harmonicNotice) harmonicNotice.hidden = false;
+      return;
+    }
+    harmonicPanel.classList.remove('hidden');
+    harmonicPanel.querySelector('.graph-wrap').style.display = '';
+    harmonicPanel.querySelector('.chord-sequence-panel').style.display = '';
+    if (harmonicNotice) harmonicNotice.hidden = true;
+    // Compute chord windows with the current window size.
+    const windowSelect = document.getElementById('harmonic-window');
+    const windowTicks = windowSelect ? parseInt(windowSelect.value, 10) : 480;
+    currentChordWindows = M.chordSequence(currentResult.events, {
+      ticksPerQuarter: currentResult.ticksPerQuarter,
+      windowTicks,
+    });
+    const chordGraph = M.buildChordTransitionGraph(currentChordWindows);
+    // Destroy any previous harmonic controller so we don't leak D3 listeners.
+    if (currentHarmonicController) {
+      currentHarmonicController.destroy();
+      currentHarmonicController = null;
+    }
+    const harmonicContainer = document.getElementById('harmonic-graph');
+    currentHarmonicController = M.render(harmonicContainer, chordGraph, {
+      mode: 'chord',
+      zoomButtonPrefix: 'harmonic-',
+    });
+    // Source label: how many windows, how many unique chords.
+    const sourceLabel = document.getElementById('harmonic-source-label');
+    if (sourceLabel) {
+      const nonSilence = currentChordWindows.filter(w => w.label !== '(silence)').length;
+      sourceLabel.textContent = `· ${nonSilence} windows · ${chordGraph.nodes.length} unique chords`;
+    }
+    // Chord sequence list (collapsed adjacent duplicates, silence skipped).
+    renderChordSequenceList(currentChordWindows);
+    // Wire the harmonic controls (window select + sliders + zoom).
+    wireHarmonicControls();
+  }
+
+  // Render the chord-sequence list: the actual chord progression
+  // (with adjacent duplicates collapsed) so the user can read what the
+  // graph is showing. Each entry: [pitch label] | [count × in sequence]
+  function renderChordSequenceList(windows) {
+    const listEl = document.getElementById('chord-sequence-list');
+    if (!listEl) return;
+    const seq = [];
+    let prev = null;
+    let count = 0;
+    for (const w of windows) {
+      if (w.label === '(silence)') continue;
+      if (w.label !== prev) {
+        if (prev) seq.push({ label: prev, count });
+        prev = w.label;
+        count = 1;
+      } else {
+        count++;
+      }
+    }
+    if (prev) seq.push({ label: prev, count });
+    if (!seq.length) {
+      listEl.innerHTML = '<li style="color: var(--muted);">(no chords detected)</li>';
+      return;
+    }
+    listEl.innerHTML = seq
+      .map(c => `<li><code>${c.label}</code><span class="pct">×${c.count}</span></li>`)
+      .join('');
+  }
+
+  // Phase 3: wire up the harmonic-panel controls. Safe to call multiple
+  // times — listeners are idempotent because they're stored on the
+  // elements themselves (only the FIRST wired listener survives).
+  let harmonicControlsWired = false;
+  function wireHarmonicControls() {
+    if (harmonicControlsWired) return;
+    harmonicControlsWired = true;
+    const windowSelect = document.getElementById('harmonic-window');
+    if (windowSelect) {
+      windowSelect.onchange = () => renderHarmonicView();
+    }
+    const minProb = document.getElementById('harmonic-min-prob');
+    const minProbVal = document.getElementById('harmonic-min-prob-val');
+    if (minProb && minProbVal) {
+      minProb.oninput = () => {
+        minProbVal.textContent = minProb.value + '%';
+        // The min-prob slider is read directly by M.render on each
+        // rebuild — no need to re-call renderHarmonicView here.
+      };
+    }
+    // Zoom buttons — D3-zoom is internal to M.render so we have to
+    // dispatch via the controller's update pathway. Simpler: just
+    // re-render, which loses the current pan/zoom. That's acceptable
+    // for v1; can be improved later.
   }
 
   // Phase 1: populate the track-picker <select> with one option per

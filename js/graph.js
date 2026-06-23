@@ -42,6 +42,34 @@
   // sliders).
   const SHARP_SCALE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
+  // Phase 3: chord-label color by quality. Quarter-tone / literal-spelling
+  // chords get a distinct purple so the user can spot them at a glance.
+  // Major = blue, minor = teal, diminished = orange, augmented = red,
+  // suspended = gray, 7th variants = desaturated, power = white,
+  // dominant 7 = amber.
+  function chordColor(label) {
+    if (label === '(silence)') return '#555';
+    if (label.includes('(') && label.includes(')')) return '#a878e8'; // literal-spelling
+    if (label.endsWith('m7b5')) return '#b08c5c';     // half-diminished
+    if (label.endsWith('dim7')) return '#d97706';
+    if (label.endsWith('m7')) return '#5fb3a8';
+    if (label.endsWith('maj7')) return '#5b8def';
+    if (label.endsWith('7b9') || label.endsWith('7#9')) return '#e09940';
+    if (label.endsWith('9') || label.endsWith('13')) return '#8aa8c9';
+    if (label.endsWith('7')) return '#e0a040';         // dominant 7
+    if (label.endsWith('6')) return '#7da3d9';
+    if (label.endsWith('m')) return '#5fb3a8';         // minor triad
+    if (label.endsWith('dim')) return '#d97706';
+    if (label.endsWith('aug')) return '#e05555';
+    if (label.endsWith('sus4') || label.endsWith('sus2')) return '#9aa0a6';
+    if (label.endsWith('add9') || label.endsWith('madd9')) return '#a8c4d9';
+    if (label === 'C' || label === 'D' || label === 'E' || label === 'F' ||
+        label === 'G' || label === 'A' || label === 'B' ||
+        /^([A-G])(?:#|b)?$/.test(label)) return '#5b8def';  // bare major triad
+    if (label === 'C5' || label === 'D5' || /^[A-G]5$/.test(label)) return '#cccccc';
+    return '#888';   // unknown
+  }
+
   // Parse a pitch-id like "F#5", "C half-sharp 5", or "C↑5" back to cents
   // above C0. Supports three notations:
   //   - "C4"             — natural/sharp (cents = oct*1200 + pc*100)
@@ -73,7 +101,14 @@
     return (octave + 1) * 1200 + centsInOctave;
   }
 
-  function render(container, graph) {
+  // Phase 3: render takes an options object as its third argument.
+  // options.mode = 'pitch' (default) renders a pitch-transition graph with
+  // pitch-class coloring and playback glow.
+  // options.mode = 'chord' renders a chord-transition graph with
+  // quality-based coloring and no playback glow.
+  function render(container, graph, options = {}) {
+    const mode = options.mode || 'pitch';
+    const isChord = mode === 'chord';
     // CSS-driven SVG sizing — never trust clientWidth/clientHeight here.
     const svg = d3.select(container).append('svg')
       .attr('width', '100%')
@@ -149,6 +184,11 @@
       const maxPitch = +document.getElementById('max-pitch').value;
 
       const filtered = workingLinks.filter(l => {
+        if (isChord) {
+          // No cents-based filtering for chord mode — the source/target
+          // IDs are chord-label strings, not pitch cents.
+          return l.value >= minProb;
+        }
         const sp = pitchOf(l.source);
         const tp = pitchOf(l.target);
         return l.value >= minProb && sp >= minPitch && sp <= maxPitch && tp >= minPitch && tp <= maxPitch;
@@ -215,20 +255,32 @@
 
       const colorByClass = document.getElementById('color-by-pitch-class').checked;
       nodeAll
-        .attr('fill', d => colorByClass ? pitchClassColor(M.pitchClass(pitchOf(d.id))) : '#00e5ff')
+        .attr('fill', d => {
+          if (isChord) return chordColor(d.id);
+          return colorByClass ? pitchClassColor(M.pitchClass(pitchOf(d.id))) : '#00e5ff';
+        })
         .attr('class', d => {
+          if (isChord) return 'node';   // no playback glow in chord mode
           // Preserve any active-glow class on rebuild.
           const cents = pitchOf(d.id);
           return activeCount.get(cents) > 0 ? 'node active' : 'node';
         })
-        .each(function(d) { activeName.set(pitchOf(d.id), d.id); });
+        .each(function(d) {
+          if (!isChord) activeName.set(pitchOf(d.id), d.id);
+        });
       // Tooltip (browser-native <title>, shown on hover). Only attach to
       // newly-entered circles — appending on every rebuild would stack
       // titles. The text uses the current d.id / d.count / d.frequency
       // (which may update across rebuilds when nodes filter in/out).
       nodeEnter
         .append('title')
-        .text(d => `${d.id} — ${d.count} occurrence${d.count === 1 ? '' : 's'} (${(d.frequency * 100).toFixed(2)}% of piece)`);
+        .text(d => {
+          const pct = (d.frequency * 100).toFixed(2);
+          if (isChord) {
+            return `${d.id} — ${d.count} chord${d.count === 1 ? '' : 's'} (${pct}% of progression)`;
+          }
+          return `${d.id} — ${d.count} occurrence${d.count === 1 ? '' : 's'} (${pct}% of piece)`;
+        });
 
       // ----- Node labels (positioned to the right of each node, with the
       // absolute frequency appended as a percentage of the whole piece).
@@ -238,34 +290,43 @@
       // works on any background; placed right of the node so it doesn't
       // overlap the circle's interior — the previous inside-the-circle
       // placement was hard to read on light-colored nodes (yellow, etc).
-      const labelSel = labelGroup.selectAll('text').data(nodes, d => d.id);
-      labelSel.exit().remove();
       // Labels are drawn INSIDE the node circle (not beside it). With
       // NODE_R=18 the inner diameter is 36px, so we use a small font
       // (8.5px) and 2 short lines: pitch name on top, frequency % on
       // the bottom. text-anchor=middle and dominant-baseline=central
       // center the text on the node's (x, y) — no dx needed.
+      // In chord mode the labels can be longer ("Cm7b5", "Dm7b5/Eb")
+      // so we use a smaller font and just show the chord name on a
+      // single line (frequency goes to the tooltip).
+      const labelSel = labelGroup.selectAll('text').data(nodes, d => d.id);
+      labelSel.exit().remove();
       const labelEnter = labelSel.enter().append('text')
-        .attr('class', 'node-label')
+        .attr('class', isChord ? 'node-label chord-label' : 'node-label')
         .attr('text-anchor', 'middle')
         .attr('dominant-baseline', 'central')
-        .attr('dy', '-0.45em');
-      // First tspan: pitch name (e.g. "C4"). Sits on the upper half.
+        .attr('dy', isChord ? '0em' : '-0.45em');
+      // First tspan: pitch name or chord label. Sits on the upper half
+      // for pitch mode, centered for chord mode.
       labelEnter.append('tspan').attr('class', 'node-label-name');
       // Second tspan: frequency % on the line below the name. dy=0.9em
       // puts it just under the first line. No x attr — inherits the
       // text element's x position (which the tick handler sets to d.x).
-      labelEnter.append('tspan').attr('class', 'node-label-freq')
-        .attr('dy', '0.9em')
-        .attr('x', 0);  // reset the relative dx from the parent tspan
+      // Skipped entirely in chord mode (label is one line only).
+      if (!isChord) {
+        labelEnter.append('tspan').attr('class', 'node-label-freq')
+          .attr('dy', '0.9em')
+          .attr('x', 0);  // reset the relative dx from the parent tspan
+      }
       labelSel.merge(labelEnter).select('.node-label-name')
         .text(d => d.id);
-      labelSel.merge(labelEnter).select('.node-label-freq')
-        .text(d => {
-          const pct = (d.frequency || 0) * 100;
-          // Two decimals for sub-1% pitches (vp2-1all.mid has many).
-          return `${pct < 1 ? pct.toFixed(2) : pct.toFixed(1)}%`;
-        });
+      if (!isChord) {
+        labelSel.merge(labelEnter).select('.node-label-freq')
+          .text(d => {
+            const pct = (d.frequency || 0) * 100;
+            // Two decimals for sub-1% pitches (vp2-1all.mid has many).
+            return `${pct < 1 ? pct.toFixed(2) : pct.toFixed(1)}%`;
+          });
+      }
 
       // Edge hover: highlight the edge + swap to the white arrow marker.
       // (Labels are now always visible — was previously toggled via .visible
@@ -405,9 +466,18 @@
     colorToggle.addEventListener('change', rebuild);
     thicknessToggle.addEventListener('change', rebuild);
 
-    document.getElementById('zoom-in').onclick  = () => svg.transition().call(zoom.scaleBy, 1.3);
-    document.getElementById('zoom-out').onclick = () => svg.transition().call(zoom.scaleBy, 0.77);
-    document.getElementById('reset-zoom').onclick = () => svg.transition().call(zoom.transform, d3.zoomIdentity);
+    // Zoom buttons — by default hard-coded to #zoom-in / #zoom-out /
+    // #reset-zoom (the pitch-mode panel). For chord mode the caller
+    // passes options.zoomButtonPrefix = 'harmonic-' so we bind to
+    // #harmonic-zoom-in instead. Both button sets work because each
+    // render() call gets its own svg + zoom controller.
+    const prefix = options.zoomButtonPrefix || '';
+    const zin = document.getElementById(prefix + 'zoom-in');
+    const zout = document.getElementById(prefix + 'zoom-out');
+    const zreset = document.getElementById(prefix + 'reset-zoom');
+    if (zin)  zin.onclick  = () => svg.transition().call(zoom.scaleBy, 1.3);
+    if (zout) zout.onclick = () => svg.transition().call(zoom.scaleBy, 0.77);
+    if (zreset) zreset.onclick = () => svg.transition().call(zoom.transform, d3.zoomIdentity);
 
     return {
       update(newGraph) {
@@ -421,6 +491,9 @@
       },
       setActive,
       clearActive,
+      zoomIn()  { if (zin)  zin.click(); },
+      zoomOut() { if (zout) zout.click(); },
+      resetZoom() { if (zreset) zreset.click(); },
     };
   }
 
