@@ -551,9 +551,16 @@ function analyzeMidi(bytes) {
   // UI's default is the first track, not the auto-pick, so this
   // is informational only.
   const autoMelodic = pickMelodicTrack(trackAnalyses);
+  // Phase 2: harmonic analysis (chord sequence + chord graph).
+  // Uses the merged events across all tracks so simultaneous
+  // pitches form one chord. Quarter-note windows by default.
+  const chordWindows = chordSequence(events, { ticksPerQuarter });
+  const chordGraph = buildChordTransitionGraph(chordWindows);
+  const monophonic = isMonophonicSequence(chordWindows);
   return {
     graph, stats, events, ticksPerQuarter, tracks, timeSignatures,
     trackAnalyses, autoMelodic,
+    chordWindows, chordGraph, monophonic,
   };
 }
 
@@ -651,16 +658,452 @@ function pickMelodicTrack(trackAnalyses) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2: harmonic analysis — chord identification + chord transition graph
+//
+// For each window of MIDI events (default: one quarter note), collect all
+// currently-sounding pitches, identify the chord, and emit a chord label.
+// Then build a Markov-style transition graph over the chord labels.
+//
+// The classifier has two modes:
+//   1. 12-TET — if every pitch in the window is on a 12-TET pitch class
+//      (cents mod 100 == 0), match against a vocabulary of standard chord
+//      templates (maj, min, dim, aug, sus, 7th variants, etc.).
+//   2. Quarter-tone — if any pitch is off the 12-TET grid (cents mod 100
+//      == 50), label by LITERAL SPELLING so the user can read what they
+//      hear ("C with neutral third", "neutral triad", etc.) rather than
+//      being forced into a wrong 12-TET name.
+//
+// Inversions are handled: if the lowest-sounding pitch is not the chord
+// root, the label gets a "/<bass>" suffix (e.g. "C/E" for a 1st-inversion
+// C major with E in the bass).
+// ---------------------------------------------------------------------------
+
+// Chord vocabulary: each template is a sorted list of intervals (in cents
+// above the root). The matching algorithm tries every pitch in the chord
+// as a candidate root and picks the template whose interval set has the
+// smallest edit distance to the observed intervals.
+//
+// 24 templates — covers the vast majority of Western tonal music. We
+// deliberately do NOT include slash chords, polychords, or extended
+// jazz harmony (9ths, 11ths, 13ths, altered dominants). When the user
+// needs those they can fall back to the literal-spelling labeler.
+const CHORD_TEMPLATES = [
+  // Triads
+  { name: '',     intervals: [0, 400, 700]            },  // major triad
+  { name: 'm',    intervals: [0, 300, 700]            },  // minor triad
+  { name: 'dim',  intervals: [0, 300, 600]            },  // diminished
+  { name: 'aug',  intervals: [0, 400, 800]            },  // augmented
+  { name: 'sus2', intervals: [0, 200, 700]            },  // suspended 2nd
+  { name: 'sus4', intervals: [0, 500, 700]            },  // suspended 4th
+  { name: '5',    intervals: [0, 700]                 },  // power chord
+  // 6ths (not technically 7th chords but commonly grouped with extensions)
+  { name: '6',    intervals: [0, 400, 700, 900]       },  // major 6
+  { name: 'm6',   intervals: [0, 300, 700, 900]       },  // minor 6
+  // 7th chords
+  { name: 'maj7', intervals: [0, 400, 700, 1100]      },
+  { name: 'm7',   intervals: [0, 300, 700, 1000]      },
+  { name: '7',    intervals: [0, 400, 700, 1000]      },  // dominant 7
+  { name: 'dim7', intervals: [0, 300, 600, 900]       },
+  { name: 'm7b5', intervals: [0, 300, 600, 1000]      },  // half-diminished
+  { name: '7sus4',intervals: [0, 500, 700, 1000]      },
+  // Added tones
+  { name: 'add9', intervals: [0, 400, 700, 1400]      },
+  { name: 'madd9',intervals: [0, 300, 700, 1400]      },
+  // 9th chords (treat as 7th + 9th)
+  { name: '9',    intervals: [0, 400, 700, 1000, 1400]},
+  { name: 'm9',   intervals: [0, 300, 700, 1000, 1400]},
+  // 11th (5-note — only as exact match, no edit distance)
+  { name: '7add11', intervals: [0, 400, 700, 1000, 1700]},
+  // Suspended 7ths
+  { name: '7sus2',intervals: [0, 200, 700, 1000]      },
+  // 13 (abbreviated — root 3 5 7 13)
+  { name: '13',   intervals: [0, 400, 700, 1000, 2100]},
+  // Altered dominants (single alteration only — full altered dominants
+  // would need a separate chord-symbol vocabulary)
+  { name: '7b9',  intervals: [0, 400, 700, 1000, 1300]},
+  { name: '7#9',  intervals: [0, 400, 700, 1000, 1500]},
+];
+
+// Reduce a pitch to its "chord signature" — the cents value mod 1200
+// (so all octaves collapse to one pitch class). For quarter-tone support
+// we keep the 50-cent resolution; for 12-TET we round to multiples of 100.
+function _chordSig(cents) {
+  const m = ((cents % 1200) + 1200) % 1200;   // safe mod
+  return Math.round(m);                       // round half-cents to whole
+}
+
+// Reduce to the nearest 12-TET pitch class (cents mod 100 → 0 if within 25¢,
+// else rounded to nearest 100). For matching against 12-TET templates.
+function _chordSig12(cents) {
+  const m = ((cents % 1200) + 1200) % 1200;
+  return Math.round(m / 100) * 100;
+}
+
+// Check if a pitch is on the 12-TET grid (mod 100 == 0, within rounding).
+function _isOn12TET(cents) {
+  const m = ((cents % 100) + 100) % 100;
+  return m < 5 || m > 95;       // tolerate 5-cent tolerance
+}
+
+// Identify the chord in a set of pitches (array of cents values).
+// Returns { label, root, bass, quality, intervals, hasQuarterTone }.
+// label is the user-facing string ("C", "Cm", "C/E", "C (neutral third)",
+// "C + E half-flat + G", etc.).
+function _identifyChord(pitches) {
+  if (pitches.length === 0) {
+    return { label: '(silence)', root: null, bass: null, intervals: [], hasQuarterTone: false };
+  }
+  if (pitches.length === 1) {
+    const only = pitches[0];
+    const name = centsToPitch(only);
+    return { label: name, root: only, bass: only, intervals: [0], hasQuarterTone: !_isOn12TET(only) };
+  }
+  // Sort ascending and dedupe (same pitch class multiple times = one chord tone).
+  const sigs12 = Array.from(new Set(pitches.map(_chordSig12))).sort((a, b) => a - b);
+  const hasQuarterTone = pitches.some(p => !_isOn12TET(p));
+  // The bass is the lowest-sounding pitch (regardless of octave).
+  const bass = pitches.reduce((a, b) => (a <= b ? a : b));
+  // If any pitch is quarter-tone, we use the literal-spelling path
+  // (12-TET templates can't faithfully represent a neutral third).
+  if (hasQuarterTone) {
+    return _labelBySpelling(pitches, bass);
+  }
+  return _labelBy12TET(sigs12, bass);
+}
+
+// 12-TET template matching. Pick the (root, template) pair that minimizes
+// the number of observed intervals not explained by the template.
+// Returns the best label or a literal-spelling fallback if no template
+// matches within a small tolerance.
+function _labelBy12TET(sigs12, bass) {
+  // Try every observed pitch as a candidate root.
+  let best = null;
+  for (let i = 0; i < sigs12.length; i++) {
+    const candidateRoot = sigs12[i];
+    const intervals = sigs12.map(s => ((s - candidateRoot) + 1200) % 1200);
+    intervals.sort((a, b) => a - b);
+    for (const t of CHORD_TEMPLATES) {
+      const score = _matchScore(intervals, t.intervals);
+      // Penalty for inverted chords (bass not the root) — keep them
+      // findable but rank them below the root-position match.
+      const inverted = ((bass % 1200) + 1200) % 1200 !== candidateRoot;
+      const adjusted = score + (inverted ? 0.5 : 0);
+      if (!best || adjusted < best.score) {
+        best = { score: adjusted, root: candidateRoot, intervals, template: t, inverted };
+      }
+    }
+  }
+  if (!best || best.score > 0.5) {
+    // No good template match — emit literal-spelling fallback.
+    return _labelBySpelling(sigs12.map(s => s + 1200 * Math.floor(bass / 1200)), bass);
+  }
+  const rootSao = centsToStepAlterOctave(best.root + 1200 * Math.floor(bass / 1200));
+  let label = _formatRoot(rootSao) + best.template.name;
+  if (best.inverted) {
+    const bassSao = centsToStepAlterOctave(bass);
+    label += '/' + _formatRoot(bassSao);
+  }
+  return {
+    label,
+    root: best.root + 1200 * Math.floor(bass / 1200),
+    bass,
+    intervals: best.intervals,
+    templateName: best.template.name,
+    hasQuarterTone: false,
+  };
+}
+
+// Match observed intervals to a template. Score = number of observed
+// intervals not in the template + number of template intervals not in the
+// observed set. Lower is better.
+function _matchScore(observed, tmpl) {
+  const oSet = new Set(observed);
+  const tSet = new Set(tmpl);
+  let score = 0;
+  for (const x of observed) if (!tSet.has(x)) score++;
+  for (const x of tmpl) if (!oSet.has(x)) score++;
+  // Slight bonus when observed and template have the same size
+  // (otherwise an observed single note matches every 1-note template
+  // like the power chord).
+  if (observed.length === tmpl.length) score -= 0.1;
+  return score;
+}
+
+// Literal-spelling label for quarter-tone chords. Sorts pitches by cents,
+// groups by letter+alteration, and emits a descriptive label.
+// Examples:
+//   {C4, E half-flat 4, G4}      → "C (neutral third)"
+//   {C4, E half-flat 4, G half-flat 4} → "C (neutral 3rd, half-flat 5th)"
+//   {C half-flat 4, E half-flat 4, G4} → "C (neutral 1st, neutral 3rd)"
+//   unrecognized                  → "C + E half-flat + G half-flat + B half-flat"
+function _labelBySpelling(pitches, bass) {
+  // Compute the spelling for each pitch using centsToStepAlterOctave.
+  const spellings = pitches.map(c => {
+    const sao = centsToStepAlterOctave(c);
+    return { cents: c, sao, letter: sao ? sao.step : '?' };
+  });
+  // Sort spellings ascending by cents (preserves bass-first order in label).
+  spellings.sort((a, b) => a.cents - b.cents);
+  // Pick the lowest-sounding pitch as the root (since we don't have a
+  // vocabulary to test against).
+  const root = spellings[0];
+  const rootName = root.sao ? _formatRoot(root.sao) : '?';
+  // Compute each non-root pitch's alteration relative to the root's letter.
+  // This is approximate — quarter-tone music doesn't have a canonical
+  // "root" the way 12-TET does. We use the bass as the conventional root.
+  const alterations = [];
+  const unknownPitches = [];
+  for (const s of spellings) {
+    if (s === root) continue;
+    if (!s.sao) { unknownPitches.push(s); continue; }
+    // Describe the alteration relative to the root's letter class.
+    const rel = _relativeAlteration(root.sao, s.sao);
+    alterations.push(rel);
+  }
+  let label;
+  // Use the descriptive form if at least one pitch in the chord is a
+  // quarter-tone alteration (raised/neutral/lowered). Pitches that
+  // are pure 12-TET intervals from the root (perfect 5th, octave, etc.)
+  // can appear in the description as plain "5th"/"8va" without breaking
+  // the descriptive form.
+  const hasQuarterToneAlteration = alterations.some(a => a.quarterTone);
+  if (alterations.length > 0 && unknownPitches.length === 0 &&
+      hasQuarterToneAlteration) {
+    // All non-root pitches have known alterations, and at least one
+    // of them is a quarter-tone deviation. Use the descriptive form.
+    const descs = alterations.map(a => a.desc);
+    label = `${rootName} (${descs.join(', ')})`;
+  } else if (alterations.length === 0 && unknownPitches.length === 0) {
+    // Single pitch — already handled in _identifyChord.
+    label = rootName;
+  } else {
+    // Mixed / unknown — literal spelling.
+    label = spellings.map(s => _formatPitch(s.sao)).join(' + ');
+  }
+  return {
+    label,
+    root: root.cents,
+    bass,
+    intervals: [],
+    hasQuarterTone: spellings.some(s => s.sao && s.sao.alter !== 0 && s.sao.alter !== 1 && s.sao.alter !== -1),
+  };
+}
+
+// Format a root name as just the letter + optional sharp + optional flat
+// (no octave). Used for chord labels: "C", "F#", "Bb".
+function _formatRoot(sao) {
+  let name = sao.step;
+  if (sao.alter === 1) name += '#';
+  else if (sao.alter === -1) name += 'b';
+  return name;
+}
+
+// Format a pitch for literal-spelling labels: "E half-flat", "G#", etc.
+// Handles all alter values from -1 to 1.5 that we expect from
+// centsToStepAlterOctave (sharp-spelled enharmonic convention).
+function _formatPitch(sao) {
+  if (!sao) return '?';
+  let name = sao.step;
+  if (sao.alter === 1) name += '#';
+  else if (sao.alter === -1) name += 'b';
+  else if (sao.alter === 0.5) name += ' half-sharp';
+  else if (sao.alter === -0.5) name += ' half-flat';
+  else if (sao.alter === 1.5) name += '# half-sharp';   // double sharp territory
+  else if (sao.alter === -1.5) name += 'b half-flat';
+  else if (sao.alter !== 0) name += ` (alter ${sao.alter})`;
+  return name;
+}
+
+// Describe the alteration of a non-root pitch relative to the root's
+// LETTER (not its chromatic position). This gives labels that match
+// how musicians THINK about chords:
+//   root C, pitch E half-flat  → "neutral 3rd" (letter interval is a 3rd,
+//                                lowered by 50¢ from major)
+//   root C, pitch D# half-sharp → "raised 2nd" (letter interval is a 2nd,
+//                                raised by 50¢ from natural D)
+//   root C, pitch G             → "5th" (letter interval is a 5th, no
+//                                alteration)
+//
+// The KEY insight: we describe by letter-distance (2nd, 3rd, etc.) not
+// chromatic distance, because that's how chord tones are named in
+// practice. "D#↑" is conceptually a raised 2nd, not a "neutral 3rd" —
+// the user wrote D# (a 2nd letter), and ↑ (raised by 50¢).
+function _relativeAlteration(rootSao, pitchSao) {
+  // Letter-to-position (number of letter steps from C).
+  // C=0, D=1, E=2, F=3, G=4, A=5, B=6.
+  const LETTER_POSITION = { C:0, D:1, E:2, F:3, G:4, A:5, B:6 };
+  const LETTER_NAMES_FROM_ROOT = [
+    'root', '2nd', '3rd', '4th', '5th', '6th', '7th',
+  ];
+  const rootPos = LETTER_POSITION[rootSao.step] || 0;
+  const pitchPos = LETTER_POSITION[pitchSao.step] || 0;
+  // Letter interval (wraps past 7 to a 7th-with-octave-bump).
+  let letterSteps = pitchPos - rootPos;
+  if (letterSteps < 0) letterSteps += 7;       // wrap within the diatonic scale
+  // Adjust for octave offset: if pitch is in a higher octave than root,
+  // the letter interval is the same letter but +7 (octave).
+  const octaveOffset = pitchSao.octave - rootSao.octave;
+  // Now decide the name: use simple letter interval (2nd/3rd/...) if
+  // pitch and root are in the same or adjacent octave, else add "high"
+  // prefix or use a compound name.
+  const baseName = LETTER_NAMES_FROM_ROOT[letterSteps] || `${letterSteps}th`;
+  // For the ideal alteration, we use the root's own alteration as the
+  // baseline (most pitches in a chord will share the root's quality
+  // when spelled relatively). E.g. Cm chord: rootC alter 0, ideal for
+  // Eb is alter -1 (minor 3rd), but for our labeling purposes we
+  // assume the "natural" position is whatever alter makes it a perfect
+  // interval in the major scale. That's almost always alter=0.
+  const idealAlter = 0;
+  const actualAlter = pitchSao.alter;
+  const deviation = actualAlter - idealAlter;
+  let desc;
+  if (Math.abs(deviation) < 0.01) {
+    desc = baseName;
+  } else if (Math.abs(deviation - 0.5) < 0.01) {
+    desc = `raised ${baseName}`;
+  } else if (Math.abs(deviation + 0.5) < 0.01) {
+    desc = `neutral ${baseName}`;
+  } else if (deviation > 0) {
+    desc = `raised ${baseName}`;
+  } else {
+    desc = `lowered ${baseName}`;
+  }
+  // Any non-integer deviation counts as a quarter-tone modification.
+  // (Integer deviations are full-tone alterations, e.g. raise a 4th
+  // to a #4 = +1 whole tone — not quarter-tone territory.)
+  const quarterTone = Math.abs(deviation - Math.round(deviation)) > 0.01;
+  return { quarterTone, desc };
+}
+
+// Group events into fixed-size windows and identify the chord in each.
+// Returns:
+//   [{ startTick, endTick, pitches: [cents, ...], label, root, bass }, ...]
+//
+// Options:
+//   ticksPerQuarter  — required for the default quarter-note window.
+//   windowTicks      — override the window size (default = ticksPerQuarter).
+//   maxWindows       — safety cap (default 2000 — ~2.5 minutes of 4/4 music).
+//
+// Algorithm:
+//   1. Walk events once, maintaining a "currently sounding" pitch set.
+//   2. At each window boundary (0, windowTicks, 2*windowTicks, ...), close
+//      the current window: emit its {startTick, pitches, label}, then
+//      start a fresh window.
+//   3. If a window is empty (silence), emit '(silence)' so the chord
+//      sequence stays aligned with the beat grid.
+function chordSequence(events, options = {}) {
+  const ticksPerQuarter = options.ticksPerQuarter || 480;
+  const windowTicks = options.windowTicks || ticksPerQuarter;
+  const maxWindows = options.maxWindows || 2000;
+  const lastTick = events.length ? events[events.length - 1].timeTicks : 0;
+  // Number of complete windows to emit. A window is [w*windowTicks, (w+1)*windowTicks).
+  // If lastTick is exactly on a window boundary, we don't emit a trailing
+  // empty window — that's how musical phrase boundaries work.
+  const totalWindows = Math.min(
+    lastTick === 0 ? 0 : Math.ceil(lastTick / windowTicks),
+    maxWindows
+  );
+  // Maintain a Map<cents, count> of currently-sounding pitches so we
+  // can handle re-attacks (a note struck twice without an intervening
+  // note_off shouldn't appear twice in the chord).
+  const sounding = new Map();
+  let eventIdx = 0;
+  const windows = [];
+  for (let w = 0; w < totalWindows; w++) {
+    const startTick = w * windowTicks;
+    const endTick = (w + 1) * windowTicks;
+    // Process every event whose time falls in [startTick, endTick).
+    while (eventIdx < events.length && events[eventIdx].timeTicks < endTick) {
+      const ev = events[eventIdx];
+      if (ev.type === 'on' && ev.vel > 0) {
+        sounding.set(ev.note, (sounding.get(ev.note) || 0) + 1);
+      } else if (ev.type === 'off' || (ev.type === 'on' && ev.vel === 0)) {
+        const c = sounding.get(ev.note) || 0;
+        if (c <= 1) sounding.delete(ev.note);
+        else sounding.set(ev.note, c - 1);
+      }
+      eventIdx++;
+    }
+    const pitches = Array.from(sounding.keys()).sort((a, b) => a - b);
+    const chord = _identifyChord(pitches);
+    windows.push({
+      startTick,
+      endTick,
+      pitches,
+      label: chord.label,
+      root: chord.root,
+      bass: chord.bass,
+      hasQuarterTone: chord.hasQuarterTone,
+    });
+  }
+  return windows;
+}
+
+// Detect whether a chord sequence is "effectively monophonic" — every
+// window has 0 or 1 sounding pitch. Returns true if so.
+function isMonophonicSequence(windows) {
+  if (!windows.length) return true;
+  for (const w of windows) {
+    if (w.pitches.length > 1) return false;
+  }
+  return true;
+}
+
+// Build a chord-transition graph from a chord sequence.
+// Same shape as buildTransitionGraph but the nodes are chord labels
+// (strings) instead of pitch names.
+function buildChordTransitionGraph(windows) {
+  // Count chord occurrences and ignore '(silence)' so the graph isn't
+  // dominated by rests. We also collapse consecutive duplicate labels
+  // so the graph reflects chord PROGRESSION, not frame-by-frame identity.
+  const seq = [];
+  let prev = null;
+  for (const w of windows) {
+    if (w.label === '(silence)') continue;
+    if (w.label !== prev) {
+      seq.push(w.label);
+      prev = w.label;
+    }
+  }
+  // Frequency of each chord (how often it appears in the sequence).
+  const freq = new Map();
+  for (const lbl of seq) freq.set(lbl, (freq.get(lbl) || 0) + 1);
+  const totalChords = seq.length || 1;
+  // Transitions: chord[i] → chord[i+1].
+  const counts = new Map();   // cur → Map(nxt → count)
+  const totals = new Map();
+  for (let i = 0; i < seq.length - 1; i++) {
+    const cur = seq[i];
+    const nxt = seq[i + 1];
+    if (!counts.has(cur)) counts.set(cur, new Map());
+    counts.get(cur).set(nxt, (counts.get(cur).get(nxt) || 0) + 1);
+    totals.set(cur, (totals.get(cur) || 0) + 1);
+  }
+  const links = [];
+  const nodeSet = new Set();
+  for (const [cur, inner] of counts) {
+    const total = totals.get(cur);
+    nodeSet.add(cur);
+    for (const [nxt, count] of inner) {
+      nodeSet.add(nxt);
+      links.push({
+        source: cur,
+        target: nxt,
+        value: count / total,
+        count,
+      });
+    }
+  }
+  for (const lbl of freq.keys()) nodeSet.add(lbl);
+  const nodes = Array.from(nodeSet).sort().map(id => {
+    const count = freq.get(id) || 0;
+    return { id, count, frequency: count / totalChords };
+  });
+  return { nodes, links };
+}
+
+// ---------------------------------------------------------------------------
 // File-type detection: sniff content rather than relying on extension. Real
-// users hit cases like "renamed a .musicxml to .mid by accident", or files
-// saved with no extension at all. Sniffing the first few bytes is the only
-// reliable signal. Returns one of:
-//   'midi'      — starts with ASCII "MThd" (MIDI header)
-//   'musicxml'  — starts with "<?xml" or "<score-" (XML prolog or root)
-//   'mxl'       — starts with "PK" (ZIP local-file-header magic)
-//                 (Compressed MusicXML — not parsed yet, but recognized so
-//                 we can give a helpful error instead of a generic one.)
-//   'unknown'   — doesn't match any of the above; show a generic error.
 //
 // The extension hint is used to make error messages more helpful ("looks like
 // XML but you gave it a .mid extension — try renaming to .musicxml") but
@@ -803,6 +1246,10 @@ const api = {
   analyzeMidi,
   detectFileType,
   extractMxl,
+  // Phase 2: harmonic analysis
+  chordSequence,
+  buildChordTransitionGraph,
+  isMonophonicSequence,
 };
 
 if (typeof module !== 'undefined' && module.exports) {
