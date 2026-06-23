@@ -579,6 +579,15 @@
     chordGlowTimers = [];
     if (!currentResult || !currentResult.chordWindows) return;
     if (!currentHarmonicController) return;
+    // Tone.Draw.schedule expects WALL-CLOCK time, not relative seconds.
+    // See js/playback.js: notes are scheduled at
+    // `Tone.now() + 0.1 + tickToSec(tick)` (the +0.1s is a buffer
+    // before the first note). The chord glow must use the same
+    // wall-clock base or it fires immediately as a "past time" event
+    // and the rest of the schedule is lost. We capture startWallClock
+    // at schedule time so the schedule is in sync with the note
+    // playback's Tone.now() + 0.1 base.
+    const startWallClock = Tone.now() + 0.1;
     for (const w of currentResult.chordWindows) {
       // Skip silence windows (no label).
       if (!w.label) continue;
@@ -592,10 +601,10 @@
         // running, so this only updates during playback.)
         if (playbackInfo) playbackInfo.textContent = `Now playing chord: ${w.label}`;
         console.log('[chord-glow] ON', w.label, 'at', Tone.now().toFixed(2) + 's');
-      }, startSec);
+      }, startWallClock + startSec);
       const offId = Tone.Draw.schedule(() => {
         if (currentHarmonicController) currentHarmonicController.setActiveChord(w.label, false);
-      }, endSec);
+      }, startWallClock + endSec);
       chordGlowTimers.push(onId, offId);
     }
   }
