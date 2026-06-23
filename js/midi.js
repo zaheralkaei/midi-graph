@@ -78,42 +78,54 @@ const QUARTER_TONE_NAMES = [
   { cents: 1150, name: 'B↑' },
 ];
 
-// Quarter-tone FLAT spelling. The "next semitone" rule: at each
-// quarter-tone boundary, the flat-spelled form is the next 12-TET
-// semitone (not the next LETTER) lowered by 50¢. For example:
+// Quarter-tone FLAT spelling. The "next LETTER" rule: at each
+// quarter-tone boundary, the flat-spelled form is the next LETTER
+// (not the next semitone) lowered by 50¢. This is how Arabic-maqam
+// / microtonal theory names these pitches — letter-based, not
+// semitone-based. Examples:
 //   6350¢ = D#↑  (sharp form, letter D, alter +1.5)
 //         = E half-flat  (flat form, letter E, alter -0.5)
-//   because the next SEMITONE after D# (300¢) is E (400¢), and E - 50
-//   = 350¢ (within octave), which IS 6350¢ in absolute cents for oct 4.
-// This rule produces musically meaningful names: "E half-flat" is
-// the "neutral third" of C, "G half-flat" is the "neutral second"
-// of F, "B half-flat" is the "neutral 2nd" of A, etc. — i.e. the
-// half-flat of the NEXT LETTER, not just any semitone up.
+//   because E is the next LETTER after D, not the next semitone.
+//   The "next letter" of D# is E (skipping D-natural since D# is
+//   already an altered form of D). The "next letter" of D is also E.
 //
-// Sharp form   Flat form (letter, alter)   Reason
-//   50  C↑      C#, -0.5     C# half-flat
-//  150  C#↑     D,  -0.5     D half-flat
-//  250  D↑      D#, -0.5     D# half-flat
-//  350  D#↑     E,  -0.5     E half-flat  (neutral 3rd of C)
-//  450  E↑      F,  -0.5     F half-flat
-//  550  F↑      F#, -0.5     F# half-flat
-//  650  F#↑     G,  -0.5     G half-flat
-//  750  G↑      G#, -0.5     G# half-flat
-//  850  G#↑     A,  -0.5     A half-flat  (neutral 3rd of F)
-//  950  A↑      A#, -0.5     A# half-flat
-// 1050  A#↑     B,  -0.5     B half-flat
-// 1150  B↑      C,  -0.5     C half-flat
+// This rule produces musically meaningful names that match how
+// maqam theorists and musicians actually think about these pitches:
+//   E half-flat = "neutral 3rd" of C (always the letter E, not D#)
+//   D half-flat = "neutral 2nd" of C (always the letter D)
+//   B half-flat = "neutral 2nd" of A (always the letter B)
+//
+// The IMPORTANT consequence: in a chord or scale that already
+// contains D, the quarter-tone pitch 250¢ is named E half-flat
+// (not D# half-flat) because E is the next LETTER after D. The two
+// spellings are enharmonically equivalent (both 250¢) but E
+// half-flat matches the maqam naming convention. The user pointed
+// this out explicitly during the audit follow-up.
+//
+// Sharp form   Flat form (letter, alter)
+//   50  C↑      D,  -0.5
+//  150  C#↑     D,  -0.5
+//  250  D↑      E,  -0.5
+//  350  D#↑     E,  -0.5
+//  450  E↑      F,  -0.5
+//  550  F↑      G,  -0.5
+//  650  F#↑     G,  -0.5
+//  750  G↑      A,  -0.5
+//  850  G#↑     A,  -0.5
+//  950  A↑      B,  -0.5
+// 1050  A#↑     B,  -0.5
+// 1150  B↑      C,  -0.5
 const QUARTER_TONE_FLAT_FORM = {
-   50: { step: 'C#', alter: -0.5 },
+   50: { step: 'D',  alter: -0.5 },
   150: { step: 'D',  alter: -0.5 },
-  250: { step: 'D#', alter: -0.5 },
+  250: { step: 'E',  alter: -0.5 },
   350: { step: 'E',  alter: -0.5 },
   450: { step: 'F',  alter: -0.5 },
-  550: { step: 'F#', alter: -0.5 },
+  550: { step: 'G',  alter: -0.5 },
   650: { step: 'G',  alter: -0.5 },
-  750: { step: 'G#', alter: -0.5 },
+  750: { step: 'A',  alter: -0.5 },
   850: { step: 'A',  alter: -0.5 },
-  950: { step: 'A#', alter: -0.5 },
+  950: { step: 'B',  alter: -0.5 },
  1050: { step: 'B',  alter: -0.5 },
  1150: { step: 'C',  alter: -0.5 },
 };
@@ -142,15 +154,16 @@ function stepAlterOctaveToCents(step, alter, octave) {
 // notes so we can render sheet music for .mid files. Uses the 24-entry
 // QUARTER_TONE_NAMES table so quarter-tones round-trip exactly:
 //   6000  → ('C',  0,   4)
-//   6050  → ('D', -0.5, 4)   ← FLAT form (was ('C', 0.5, 4) in old sharp convention)
+//   6050  → ('D', -0.5, 4)   ← FLAT form (next letter)
 //   6100  → ('C#', 0,   4)
-//   6150  → ('D', -0.5, 4)   ← FLAT form (was ('C#', 0.5, 4))
-//   6350  → ('E', -0.5, 4)   ← FLAT form (was ('D#', 0.5, 4))
+//   6150  → ('D', -0.5, 4)   ← FLAT form
+//   6250  → ('E', -0.5, 4)   ← FLAT form (next letter after D)
+//   6350  → ('E', -0.5, 4)   ← FLAT form (next letter after D#)
 // Eighth-tones (e.g. 6025) round to the nearest quarter-tone.
 //
 // At quarter-tone boundaries the function returns the FLAT-spelled
-// enharmonic (E half-flat for 6350¢) instead of the SHARP-spelled form
-// (D#↑) — see QUARTER_TONE_FLAT_FORM and the comment block on it.
+// enharmonic (E half-flat for 6350¢) using the "next LETTER" rule —
+// see QUARTER_TONE_FLAT_FORM and the comment block on it.
 function centsToStepAlterOctave(cents) {
   if (cents == null || !isFinite(cents) || cents < 0) return null;
   // octave = floor(cents / 1200) - 1, matching centsToPitch.

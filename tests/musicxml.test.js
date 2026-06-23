@@ -146,9 +146,9 @@ test('parseMusicXml: rejects unsupported root', () => {
 test('analyzeMusicXml: 3 quarter-tone notes produce 3 distinct graph nodes', () => {
   // C4, 6050¢, C#4 — all three are different pitches, all different nodes.
   // The 6050¢ pitch is written in MusicXML as <alter>0.5</alter> (half-sharp
-  // of C), but under the new flat-spelled enharmonic convention it
-  // displays as "C# half-flat 4" (the half-flat of C#, which is 50¢ below
-  // C# = 6050¢). The cents value is the same; only the display name
+  // of C), but under the new flat-spelled (next-LETTER) enharmonic
+  // convention it displays as "D half-flat 4" (the next LETTER after C,
+  // lowered by 50¢). The cents value is the same; only the display name
   // changed.
   const xmlText = `<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="3.1">
@@ -164,9 +164,9 @@ test('analyzeMusicXml: 3 quarter-tone notes produce 3 distinct graph nodes', () 
 </score-partwise>`;
   const r = xml.analyzeMusicXml(xmlText);
   const ids = r.graph.nodes.map(n => n.id).sort();
-  assertEqual(ids, ['C# half-flat4', 'C#4', 'C4']);
+  assertEqual(ids, ['C#4', 'C4', 'D half-flat4']);
   assertEqual(r.stats.unique_note_count, 3);
-  assertEqual(r.stats.transition_count, 2);   // C→C# half-flat, C# half-flat→C#
+  assertEqual(r.stats.transition_count, 2);   // C→D half-flat, D half-flat→C#
 });
 
 test('analyzeMusicXml: quarter-tone transition probabilities', () => {
@@ -240,9 +240,9 @@ test('analyzeMusicXml: pitch range includes "semitones" word for fractional span
   // because it's the JS toFixed default; that's fine.
   assert(/0\.5 semitones/.test(r.stats.pitch_range), `unexpected range: ${r.stats.pitch_range}`);
   // And the spelled names should appear (now in the flat-spelled
-  // enharmonic form: "C# half-flat 4" for 6050¢).
-  assert(r.stats.pitch_range.includes('C# half-flat4'),
-    `expected "C# half-flat4" in pitch range, got: ${r.stats.pitch_range}`);
+  // enharmonic form: "D half-flat 4" for 6050¢).
+  assert(r.stats.pitch_range.includes('D half-flat4'),
+    `expected "D half-flat4" in pitch range, got: ${r.stats.pitch_range}`);
 });
 
 // ---------------------------------------------------------------------------
