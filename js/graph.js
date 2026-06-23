@@ -446,8 +446,23 @@
         .filter(d => d.id === name)
         .classed('active', next > 0);
     }
+    // Phase 3: chord-mode glow. The chord graph's node ids are the
+    // chord labels themselves (e.g. "C neutral triad"), so we just
+    // toggle .active on the matching circle. Reference-counted so
+    // overlapping chord windows don't double-glow.
+    const chordActiveCount = new Map();   // chord label → int
+    function setActiveChord(label, on) {
+      const cur = chordActiveCount.get(label) || 0;
+      const next = on ? cur + 1 : Math.max(0, cur - 1);
+      if (next === 0) chordActiveCount.delete(label);
+      else chordActiveCount.set(label, next);
+      nodeGroup.selectAll('circle')
+        .filter(d => d.id === label)
+        .classed('active', next > 0);
+    }
     function clearActive() {
       activeCount.clear();
+      chordActiveCount.clear();
       nodeGroup.selectAll('circle').classed('active', false);
     }
 
@@ -499,6 +514,7 @@
         svg.remove();
       },
       setActive,
+      setActiveChord,
       clearActive,
       zoomIn()  { if (zin)  zin.click(); },
       zoomOut() { if (zout) zout.click(); },

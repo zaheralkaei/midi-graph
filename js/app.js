@@ -94,6 +94,8 @@
       currentHarmonicController.destroy();
       currentHarmonicController = null;
     }
+    // Phase 3: cancel any pending chord-window glow callbacks.
+    if (typeof clearChordGlow === 'function') clearChordGlow();
     // Clear innerHTML so large previous files don't leave stale DOM
     // (memory pressure on consecutive large loads).
     document.getElementById('stats-grid').innerHTML = '';
@@ -240,14 +242,33 @@
     renderHarmonicView();
 
     // Wire playback callbacks so the graph glows when each pitch is sounding.
-    // Guard against the controller being null in case the graph was torn down
-    // (e.g. during resetState) before the callback fires.
-    // Playback always uses the merged events so the user hears the whole
-    // piece — switching tracks in the picker changes what the GRAPH
-    // shows, not what gets played.
+    // The onNoteOn/onNoteOff callbacks receive the original event (with
+    // its track field) so we can do track-aware glow — when the user
+    // picks a single track in the picker, only that track's notes glow
+    // on the graph. Playback itself always uses the MERGED events so the
+    // user hears the whole piece regardless of which track the graph
+    // visualizes.
+    //
+    // We resolve the selected trackIndex DYNAMICALLY (at callback time)
+    // so that switching the track picker mid-playback re-targets the
+    // glow without rebuilding the playback instance.
+    const melodicTrackIndex = () => {
+      if (!currentResult || !currentResult.trackAnalyses) return null;
+      if (currentMelodicIndex < 0
+          || currentMelodicIndex >= currentResult.trackAnalyses.length) return null;
+      return currentResult.trackAnalyses[currentMelodicIndex].trackIndex;
+    };
     currentPlayback = M.buildPlayback(result.events, result.ticksPerQuarter, {
-      onNoteOn: (cents) => currentGraphController && currentGraphController.setActive(cents, true),
-      onNoteOff: (cents) => currentGraphController && currentGraphController.setActive(cents, false),
+      onNoteOn: (cents, event) => {
+        const sel = melodicTrackIndex();
+        if (sel !== null && event && event.track !== sel) return;
+        if (currentGraphController) currentGraphController.setActive(cents, true);
+      },
+      onNoteOff: (cents, event) => {
+        const sel = melodicTrackIndex();
+        if (sel !== null && event && event.track !== sel) return;
+        if (currentGraphController) currentGraphController.setActive(cents, false);
+      },
     });
     playBtn.disabled = false;
     stopBtn.disabled = true;
@@ -546,6 +567,38 @@
     await loadBytes(new Uint8Array(buf), 'examples/ya-tyra.mxl');
   });
 
+  // Phase 3: chord-window glow. Schedules Tone.Draw callbacks for each
+  // chord window so the chord graph glows in sync with the audio. The
+  // chord windows come from the current harmonic analysis (analyzeMidi's
+  // chordWindows field) and use the same tickToSec as the note playback.
+  // The schedule is stored so stop() can cancel it.
+  let chordGlowTimers = [];
+  function scheduleChordGlow(tickToSec) {
+    // Cancel any previously-scheduled chord glows.
+    for (const id of chordGlowTimers) Tone.Draw.cancel(id);
+    chordGlowTimers = [];
+    if (!currentResult || !currentResult.chordWindows) return;
+    if (!currentHarmonicController) return;
+    for (const w of currentResult.chordWindows) {
+      // Skip silence windows (no label).
+      if (!w.label) continue;
+      const startSec = tickToSec(w.startTick);
+      const endSec = tickToSec(w.endTick);
+      const onId = Tone.Draw.schedule(() => {
+        if (currentHarmonicController) currentHarmonicController.setActiveChord(w.label, true);
+      }, startSec);
+      const offId = Tone.Draw.schedule(() => {
+        if (currentHarmonicController) currentHarmonicController.setActiveChord(w.label, false);
+      }, endSec);
+      chordGlowTimers.push(onId, offId);
+    }
+  }
+  function clearChordGlow() {
+    for (const id of chordGlowTimers) Tone.Draw.cancel(id);
+    chordGlowTimers = [];
+    if (currentHarmonicController) currentHarmonicController.clearActive();
+  }
+
   playBtn.addEventListener('click', async () => {
     if (!currentPlayback || isPlaying) return;
     await Tone.start();
@@ -553,11 +606,14 @@
     playBtn.disabled = true;
     stopBtn.disabled = false;
     playbackInfo.textContent = `Playing ${currentPlayback.noteCount} notes…`;
+    // Phase 3: schedule chord-window glow alongside the note playback.
+    if (currentPlayback.tickToSec) scheduleChordGlow(currentPlayback.tickToSec);
     await currentPlayback.play();
     isPlaying = false;
     playBtn.disabled = false;
     stopBtn.disabled = true;
     playbackInfo.textContent = `Played ${currentPlayback.noteCount} notes.`;
+    clearChordGlow();
   });
 
   stopBtn.addEventListener('click', () => {
@@ -567,6 +623,7 @@
     playBtn.disabled = false;
     stopBtn.disabled = true;
     playbackInfo.textContent = 'Stopped.';
+    clearChordGlow();
   });
 
   // ----- Info modal (concept and implementation by Zaher Alkaei) -----

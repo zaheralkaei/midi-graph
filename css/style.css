@@ -292,10 +292,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* Active-node glow: drop-shadow that pulses while the pitch is sounding.
    The animation runs on every node but only nodes with .active get the
    filter applied (the rest keep the default 0 0 0 transparent shadow). */
-.node {
+/* Phase 3 fix: D3's setActive adds the 'active' class to the circle
+   element, not to a parent g.node group, so the selector is
+   `circle.active` (or `circle.node.active` for extra safety). The
+   previous `.node.active` selector never matched. */
+circle.node,
+circle {
   /* No filter by default — needed so non-active nodes render fast. */
 }
-.node.active {
+circle.node.active,
+circle.active {
   filter: drop-shadow(0 0 6px #00e5ff) drop-shadow(0 0 14px #00e5ff);
   animation: pulse-glow 0.6s ease-in-out infinite alternate;
 }

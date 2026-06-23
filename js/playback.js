@@ -4,9 +4,9 @@
 // Public API:
 //   MidiGraph.buildPlayback(events, ticksPerQuarter, callbacks) → { play, stop, noteCount }
 //
-//   events       : [{ timeTicks, type, note (cents), tempoBPM }, ...]
+//   events       : [{ timeTicks, type, note (cents), vel, track, channel, ... }, ...]
 //   ticksPerQuarter : int
-//   callbacks    (optional): { onNoteOn(cents), onNoteOff(cents) }
+//   callbacks    (optional): { onNoteOn(cents, event), onNoteOff(cents, event) }
 //
 // Fixes vs. naive implementation:
 //   - Stop button cancels scheduled-future notes too (not just releaseAll).
@@ -15,7 +15,11 @@
 //   - onNoteOn/onNoteOff fire at the exact scheduled audio time, not at the
 //     wall-clock moment of scheduling. This keeps the visual glow in sync
 //     with what the user hears even if the page is laggy.
-
+//   - Each callback receives the original event object (2nd arg) so
+//     callers can do track-aware filtering — e.g. when the user picks
+//     a single track in the picker, only that track's notes glow on
+//     the graph. See js/app.js for the filter wiring.
+//
 (function () {
   const M = window.MidiGraph;
 
@@ -33,28 +37,33 @@
     // same tick: shift() closes ON1, pop() would close ON2 with dur=0).
     // For polyphonic chords (different pitches) FIFO and LIFO are
     // equivalent since each pitch has its own queue.
-    const pending = new Map();   // cents → tickOn[]  (FIFO queue)
-    const notes = [];             // [{ startSec, durSec, cents }]
+    //
+    // We keep the original event reference on each note so the
+    // onNoteOn/onNoteOff callbacks can access the track field (and
+    // any other metadata). The notes array stores { startSec, durSec,
+    // cents, event } — the event is passed through verbatim.
+    const pending = new Map();   // cents → [{ tickOn, event }]  (FIFO queue)
+    const notes = [];             // [{ startSec, durSec, cents, event }]
     for (const ev of events) {
       if (ev.type === 'on') {
         if (!pending.has(ev.note)) pending.set(ev.note, []);
-        pending.get(ev.note).push(ev.timeTicks);
+        pending.get(ev.note).push({ tickOn: ev.timeTicks, event: ev });
       } else if (ev.type === 'off') {
         const stack = pending.get(ev.note);
         if (stack && stack.length) {
-          const tOn = stack.shift();
-          const startSec = tickToSec(tOn);
+          const head = stack.shift();
+          const startSec = tickToSec(head.tickOn);
           const endSec = tickToSec(ev.timeTicks);
           let durSec = Math.max(0.05, endSec - startSec);
           if (!isFinite(durSec) || durSec > 1.0) durSec = 1.0;
-          notes.push({ startSec, durSec, cents: ev.note });
+          notes.push({ startSec, durSec, cents: ev.note, event: head.event });
         }
         if (stack && stack.length === 0) pending.delete(ev.note);
       }
     }
     for (const [cents, stack] of pending) {
-      for (const tOn of stack) {
-        notes.push({ startSec: tickToSec(tOn), durSec: 0.5, cents });
+      for (const head of stack) {
+        notes.push({ startSec: tickToSec(head.tickOn), durSec: 0.5, cents, event: head.event });
       }
     }
     notes.sort((a, b) => a.startSec - b.startSec);
@@ -79,7 +88,7 @@
         if (stopped) return;
         synth.triggerAttack(freq, attackTime);
         currentlyActive.add(cents);
-        onNoteOn(cents);
+        onNoteOn(cents, n.event);
       }, attackTime);
 
       // Schedule the release (the tone ends).
@@ -88,7 +97,7 @@
         synth.triggerRelease(freq, releaseTime);
         if (currentlyActive.has(cents)) {
           currentlyActive.delete(cents);
-          onNoteOff(cents);
+          onNoteOff(cents, n.event);
         }
       }, releaseTime);
 
@@ -123,7 +132,7 @@
           // Make sure the last note's off callback fires if Draw missed it.
           if (!stopped && currentlyActive.has(notes[notes.length - 1].cents)) {
             currentlyActive.delete(notes[notes.length - 1].cents);
-            onNoteOff(notes[notes.length - 1].cents);
+            onNoteOff(notes[notes.length - 1].cents, notes[notes.length - 1].event);
           }
           // Clear scheduled timer ids now that the play has fully completed.
           // Without this, a second call to play() would see scheduledTimers
@@ -154,13 +163,18 @@
       // the over-decrement bug where calling onNoteOff for every scheduled
       // note (including ones that already released normally) would decrement
       // the graph's activeCount past zero.
+      //
+      // The stop() fallback doesn't have the original event object — only
+      // the cents. We pass null as the event so the caller can detect the
+      // stop-time fallback and skip track-aware filtering (treat the off
+      // as clearing any active state regardless of track).
       for (const cents of currentlyActive) {
-        onNoteOff(cents);
+        onNoteOff(cents, null);
       }
       currentlyActive.clear();
     }
 
-    return { play, stop, noteCount: notes.length };
+    return { play, stop, noteCount: notes.length, tickToSec };
   }
 
   M.buildPlayback = buildPlayback;
