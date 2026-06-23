@@ -586,6 +586,12 @@
       const endSec = tickToSec(w.endTick);
       const onId = Tone.Draw.schedule(() => {
         if (currentHarmonicController) currentHarmonicController.setActiveChord(w.label, true);
+        // Also update the playback-info text so the user can see the
+        // chord transition even if the visual glow doesn't render.
+        // (Tone.Draw callbacks fire only when the audio context is
+        // running, so this only updates during playback.)
+        if (playbackInfo) playbackInfo.textContent = `Now playing chord: ${w.label}`;
+        console.log('[chord-glow] ON', w.label, 'at', Tone.now().toFixed(2) + 's');
       }, startSec);
       const offId = Tone.Draw.schedule(() => {
         if (currentHarmonicController) currentHarmonicController.setActiveChord(w.label, false);
