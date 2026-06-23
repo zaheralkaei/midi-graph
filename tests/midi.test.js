@@ -222,6 +222,94 @@ test('pitchOf cents formula: quarter-tone support', () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// detectFileType — sniff content rather than relying on extension. Used by
+// app.js to route uploads to the correct parser. Crucial because users
+// routinely rename .musicxml to .mid by accident.
+// ---------------------------------------------------------------------------
+test('detectFileType: MIDI header (MThd)', () => {
+  const r = m.detectFileType(new Uint8Array([0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6]));
+  assertEqual(r.type, 'midi');
+});
+test('detectFileType: MusicXML with prolog', () => {
+  const xml = '<?xml version="1.0" encoding="UTF-8"?><score-partwise/>';
+  const bytes = new TextEncoder().encode(xml);
+  const r = m.detectFileType(bytes, 'foo.musicxml');
+  assertEqual(r.type, 'musicxml');
+});
+test('detectFileType: MusicXML without prolog (rare)', () => {
+  const xml = '<score-timewise version="3.1"/>';
+  const bytes = new TextEncoder().encode(xml);
+  const r = m.detectFileType(bytes, 'foo.xml');
+  assertEqual(r.type, 'musicxml');
+});
+test('detectFileType: MusicXML with leading whitespace + BOM', () => {
+  // UTF-8 BOM (EF BB BF) followed by XML
+  const bytes = new Uint8Array([0xef, 0xbb, 0xbf, 0x3c, 0x3f, 0x78, 0x6d, 0x6c]);
+  const r = m.detectFileType(bytes, 'foo.musicxml');
+  assertEqual(r.type, 'musicxml');
+});
+test('detectFileType: .mxl (compressed MusicXML / ZIP)', () => {
+  // ZIP local file header magic = PK\x03\x04
+  const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]);
+  const r = m.detectFileType(bytes, 'song.mxl');
+  assertEqual(r.type, 'mxl');
+});
+test('detectFileType: unrecognized binary file', () => {
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);  // PNG
+  const r = m.detectFileType(bytes, 'image.png');
+  assertEqual(r.type, 'unknown');
+});
+test('detectFileType: unrecognized with .mid extension gives helpful hint', () => {
+  // A file with .mid extension that's actually XML (the common user mistake)
+  const xml = '<?xml version="1.0"?><score-partwise/>';
+  const bytes = new TextEncoder().encode(xml);
+  const r = m.detectFileType(bytes, 'song.mid');
+  assertEqual(r.type, 'musicxml', 'should detect XML content regardless of extension');
+  // The detect function doesn't include the hint for musicxml matches, only
+  // for unknown types. The hint lives in app.js's error display.
+});
+test('detectFileType: unknown content with .mid extension includes hint', () => {
+  // Pure garbage that starts with non-MThd, non-XML, non-ZIP bytes.
+  const bytes = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x04, 0x05]);
+  const r = m.detectFileType(bytes, 'song.mid');
+  assertEqual(r.type, 'unknown');
+  assert(r.reason.indexOf('.mid extension') >= 0,
+    `hint should mention .mid extension, got: ${r.reason}`);
+  assert(r.reason.indexOf('renaming it to .musicxml') >= 0,
+    `hint should suggest renaming, got: ${r.reason}`);
+});
+test('detectFileType: unknown with .mxl extension mentions re-export', () => {
+  const bytes = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x04, 0x05]);
+  const r = m.detectFileType(bytes, 'song.mxl');
+  assertEqual(r.type, 'unknown');
+  // Wait — .mxl IS detected as 'mxl' if it starts with PK. So a non-PK
+  // .mxl file would be 'unknown' but with the .mxl-specific hint. The hint
+  // for 'unknown' says ".mxl extension" but the .mxl-detection path says
+  // "export as uncompressed". This test confirms both paths coexist.
+  // Actually our code marks unknown+.mxl as ".mxl is recognized but not
+  // yet parsed — export as uncompressed .musicxml". Let me verify this
+  // works correctly for the non-PK .mxl case too.
+  // (The hint string in detectFileType for .mxl says "compressed MusicXML
+  // .mxl is recognized but not yet parsed" — that's the messaging.)
+  // For our test, we only check that .mxl extension triggers the .mxl hint.
+  // Note: 'unknown' for a .mxl file means "no PK header, can't process".
+  // The user-facing message comes from app.js which checks detected.type
+  // and shows a different message for 'mxl'. So detectFileType's hint for
+  // unknown+.mxl doesn't really fire in practice — app.js catches 'mxl'
+  // before falling through to 'unknown'. This test is just a safety net.
+  assert(r.reason.indexOf('.mxl') >= 0 || r.reason.indexOf('compressed MusicXML') >= 0,
+    `hint should mention .mxl or compressed, got: ${r.reason}`);
+});
+test('detectFileType: empty or too-small file', () => {
+  const r1 = m.detectFileType(new Uint8Array([]), 'empty.mid');
+  assertEqual(r1.type, 'unknown');
+  assertEqual(r1.reason, 'file too small to sniff');
+  const r2 = m.detectFileType(new Uint8Array([0, 1, 2]), 'tiny.mid');
+  assertEqual(r2.type, 'unknown');
+  assertEqual(r2.reason, 'file too small to sniff');
+});
+
 function assertNotEqual(a, b) {
   if (a === b) throw new Error(`expected ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
 }

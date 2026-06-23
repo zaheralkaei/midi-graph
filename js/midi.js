@@ -450,6 +450,71 @@ function analyzeMidi(bytes) {
 }
 
 // ---------------------------------------------------------------------------
+// File-type detection: sniff content rather than relying on extension. Real
+// users hit cases like "renamed a .musicxml to .mid by accident", or files
+// saved with no extension at all. Sniffing the first few bytes is the only
+// reliable signal. Returns one of:
+//   'midi'      — starts with ASCII "MThd" (MIDI header)
+//   'musicxml'  — starts with "<?xml" or "<score-" (XML prolog or root)
+//   'mxl'       — starts with "PK" (ZIP local-file-header magic)
+//                 (Compressed MusicXML — not parsed yet, but recognized so
+//                 we can give a helpful error instead of a generic one.)
+//   'unknown'   — doesn't match any of the above; show a generic error.
+//
+// The extension hint is used to make error messages more helpful ("looks like
+// XML but you gave it a .mid extension — try renaming to .musicxml") but
+// does NOT influence the returned type. Routing is always by content.
+// ---------------------------------------------------------------------------
+function detectFileType(bytes, filename) {
+  if (!bytes || bytes.length < 4) {
+    return { type: 'unknown', reason: 'file too small to sniff' };
+  }
+  // First 4 bytes as ASCII.
+  const head = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+  if (head === 'MThd') return { type: 'midi' };
+  if (head === 'PK\x03\x04' || head === 'PK\x05\x06' || head === 'PK\x07\x08') {
+    return { type: 'mxl' };
+  }
+  // XML files often start with "<?xm" (the processing instruction) or
+  // directly with the root element. Check for "<?xm" first (most common),
+  // then "<sco" for files that omit the prolog (some exporters do this).
+  // We only look at the first 5 bytes to keep this cheap.
+  if (bytes.length >= 5) {
+    const head5 = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
+    if (head5.startsWith('<?xml') || head5.startsWith('<sco')) {
+      return { type: 'musicxml' };
+    }
+  }
+  // Last-ditch: search for "<score-" in the first 1KB. Some files have a
+  // BOM or whitespace before the root element.
+  const sniffLen = Math.min(bytes.length, 1024);
+  let text = '';
+  for (let i = 0; i < sniffLen; i++) {
+    const c = bytes[i];
+    if (c < 32 && c !== 9 && c !== 10 && c !== 13) break;  // stop at binary
+    text += String.fromCharCode(c);
+  }
+  if (text.indexOf('<score-') >= 0 || text.indexOf('<?xml') >= 0) {
+    return { type: 'musicxml' };
+  }
+  // Build a helpful hint if we can guess what they MEANT to upload.
+  let hint = '';
+  if (filename) {
+    const lower = filename.toLowerCase();
+    if (lower.endsWith('.mid') || lower.endsWith('.midi')) {
+      hint = ' (your file has a .mid extension but the content does not look like MIDI — it might be a MusicXML file renamed to .mid; try renaming it to .musicxml)';
+    } else if (lower.endsWith('.mxl')) {
+      hint = ' (compressed MusicXML .mxl is recognized but not yet parsed — export as uncompressed .musicxml)';
+    } else if (lower.endsWith('.xml')) {
+      hint = ' (your file has .xml extension but is not a valid MusicXML document)';
+    } else if (lower.endsWith('.musicxml')) {
+      hint = ' (your file has .musicxml extension but the content does not start with valid XML)';
+    }
+  }
+  return { type: 'unknown', reason: 'unrecognized file format' + hint };
+}
+
+// ---------------------------------------------------------------------------
 // Exports — CommonJS for node tests, globals for browser <script> tag.
 // ---------------------------------------------------------------------------
 const api = {
@@ -467,6 +532,7 @@ const api = {
   ticksToSeconds,
   ticksToSecondsSegments,
   analyzeMidi,
+  detectFileType,
 };
 
 if (typeof module !== 'undefined' && module.exports) {

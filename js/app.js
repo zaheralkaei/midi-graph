@@ -169,28 +169,49 @@
     playbackInfo.textContent = `${currentPlayback.noteCount} notes ready. Click Play to start.`;
   }
 
-  // Detect file type by extension. Both .mid and .musicxml use the input
-  // element's accepted MIME/extension list; we mirror that here.
-  function isMusicXml(name) {
-    const lower = name.toLowerCase();
-    return lower.endsWith('.musicxml') || lower.endsWith('.xml');
+  // Detect file type by inspecting the actual content (not the extension).
+  // Users routinely rename .musicxml to .mid by accident, or export a .mxl
+  // (compressed MusicXML) when the picker expects .musicxml. Sniffing the
+  // first bytes is the only reliable signal. See midi.js's detectFileType.
+  async function loadFile(file) {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    const detected = M.detectFileType(bytes, file.name);
+
+    if (detected.type === 'midi') {
+      loadMidiBytes(bytes, file.name);
+    } else if (detected.type === 'musicxml') {
+      // Decode text here (TextDecoder is forgiving about BOM and encoding).
+      const text = new TextDecoder('utf-8').decode(bytes);
+      await loadMusicXmlText(text, file.name);
+    } else if (detected.type === 'mxl') {
+      // Compressed MusicXML — recognized but not yet parsed. Give a
+      // helpful error so the user knows the app sees the format but
+      // can't unpack it (yet).
+      const msg = 'Compressed MusicXML (.mxl) detected — not yet supported. ' +
+        'Re-export as uncompressed .musicxml from your notation software.';
+      showError(msg);
+      playbackInfo.textContent = msg;
+    } else {
+      // Unknown — show the reason, which already includes the helpful hint
+      // based on the file's extension.
+      const msg = 'Could not detect file type. ' + detected.reason;
+      showError(msg);
+      playbackInfo.textContent = msg;
+    }
   }
 
   fileInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     if (file.size > 16 * 1024 * 1024) {
-      playbackInfo.textContent = 'File too large. Limit is 16 MB.';
-      e.target.value = '';  // reset so re-picking same file fires change
+      const msg = 'File too large. Limit is 16 MB.';
+      showError(msg);
+      playbackInfo.textContent = msg;
+      e.target.value = '';
       return;
     }
-    if (isMusicXml(file.name)) {
-      const text = await file.text();
-      await loadMusicXmlText(text, file.name);
-    } else {
-      const buf = await file.arrayBuffer();
-      loadMidiBytes(new Uint8Array(buf), file.name);
-    }
+    await loadFile(file);
     e.target.value = '';  // reset so re-picking same file fires change next time
   });
 
