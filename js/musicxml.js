@@ -414,7 +414,23 @@ function buildSyntheticMusicXml(events, ticksPerQuarter) {
   // Emit measures, processing carryover between them.
   const xml = [];
   xml.push('<?xml version="1.0" encoding="UTF-8"?>');
-  xml.push('<score-partwise version="3.1">');
+  // DOCTYPE + <defaults> + <identification> match the structure of a
+  // MusicXML file exported from MuseScore / Sibelius / Dorico. OSMD
+  // and other MusicXML consumers expect these to be present; a
+  // minimal but valid <defaults> prevents "Cannot read properties of
+  // undefined (reading 'toLowerCase')" errors that happen when OSMD
+  // tries to read scaling/measure-layout attributes that don't exist.
+  xml.push('<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">');
+  xml.push('<score-partwise version="4.0">');
+  xml.push('  <work><work-title>Synthesized</work-title></work>');
+  xml.push('  <identification>');
+  xml.push('    <encoding><software>midi-graph synth</software></encoding>');
+  xml.push('  </identification>');
+  xml.push('  <defaults>');
+  xml.push('    <scaling><millimeters>7</millimeters><tenths>40</tenths></scaling>');
+  xml.push('    <page-layout><page-height>1700</page-height><page-width>1200</page-width></page-layout>');
+  xml.push('    <staff-layout><staff-distance>80</staff-distance></staff-layout>');
+  xml.push('  </defaults>');
   xml.push('  <part-list>');
   xml.push('    <score-part id="P1"><part-name>Synthesized</part-name></score-part>');
   xml.push('  </part-list>');

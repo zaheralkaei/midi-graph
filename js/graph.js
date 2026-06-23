@@ -245,9 +245,16 @@
         .attr('text-anchor', 'start')
         .attr('dominant-baseline', 'central')
         .attr('dx', NODE_R + 6);
+      // First tspan: pitch name (e.g. "C4"). No x attr — inherits the
+      // text element's x position so it draws at (node.x + dx, node.y).
       labelEnter.append('tspan').attr('class', 'node-label-name');
+      // Second tspan: frequency percentage on a new line below the name.
+      // dy: 1.1em moves it below the first line. No x — also inherits
+      // parent's x. (Setting x here would place the tspan at SVG x=24
+      // regardless of node position, which is what was making the
+      // frequency line render at the top-left of the SVG until the
+      // user toggled 'Color by pitch class' to trigger a re-layout.)
       labelEnter.append('tspan').attr('class', 'node-label-freq')
-        .attr('x', NODE_R + 6)
         .attr('dy', '1.1em');
       labelSel.merge(labelEnter).select('.node-label-name')
         .text(d => d.id);
