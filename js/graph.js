@@ -333,7 +333,14 @@
         // Labels are positioned to the right of each node. The text
         // element's x is the node's x; the dx and dominant-baseline on
         // the <text> handle the offset.
-        labelSel.attr('x', d => d.x).attr('y', d => d.y);
+        // CRITICAL: use the MERGED label selection (enter + update), not
+        // just labelSel. On first load, labelSel is the empty update
+        // selection, and labelEnter holds all the actual <text> nodes.
+        // Without .merge(), the tick handler would set x/y on zero elements
+        // and the labels would stay at (0, 0) — drawn at the SVG's
+        // top-left, not next to their nodes.
+        const labelAll = labelSel.merge(labelEnter);
+        labelAll.attr('x', d => d.x).attr('y', d => d.y);
       });
     }
 

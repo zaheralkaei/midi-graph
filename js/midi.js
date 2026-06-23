@@ -113,15 +113,27 @@ function centsToStepAlterOctave(cents) {
   const rounded = roundToNearest50(withinOctave);
   const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
   if (!match) return null;
-  // Decompose match.name → (step, alter). Names are 'C' / 'C↑' / 'C#' / 'C#↑'.
-  // For 'C':  step='C',  alter=0
-  // For 'C↑': step='C',  alter=0.5  (quarter-tone sharp of C, i.e. C half-sharp)
-  // For 'C#': step='C#', alter=0
-  // For 'C#↑': step='C#', alter=0.5
+  // Decompose match.name → (step, alter). Names are like:
+  //   'C'    → step='C',  alter=0
+  //   'C↑'   → step='C',  alter=0.5  (half-sharp)
+  //   'C#'   → step='C',  alter=1    (full sharp)
+  //   'C#↑'  → step='C',  alter=1.5  (sharp + half-sharp)
+  // OSMD's pitchEnumValues is [C, D, E, F, G, A, B] (no sharps/flats) and
+  // expects the alter element separately. Returning step='C#' would make
+  // OSMD's pitchEnumValues.indexOf('C#') = -1 and set FundamentalNote to
+  // undefined, crashing VexFlowGraphicalSymbolFactory.pitch() with
+  // 'undefined.toLowerCase()'.
   const isQuarter = match.name.endsWith('\u2191');
-  const step = isQuarter ? match.name.slice(0, -1) : match.name;
-  const alter = isQuarter ? 0.5 : 0;
-  return { step, alter, octave };
+  const hasSharp = match.name.endsWith('#') || (isQuarter && match.name.endsWith('#\u2191'));
+  if (isQuarter) {
+    // Strip the trailing ↑.
+    const base = match.name.slice(0, -1);
+    return { step: hasSharp ? base.slice(0, -1) : base, alter: hasSharp ? 1.5 : 0.5, octave };
+  }
+  if (hasSharp) {
+    return { step: match.name.slice(0, -1), alter: 1, octave };
+  }
+  return { step: match.name, alter: 0, octave };
 }
 
 // Round to nearest 50 cents using banker's rounding (round-half-to-even).

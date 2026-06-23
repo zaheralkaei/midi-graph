@@ -716,42 +716,52 @@ test('computeStats: all_transitions includes self-loops when present', () => {
 // synthesize MusicXML from MIDI events so .mid files can also render sheet
 // music.
 // ---------------------------------------------------------------------------
-test('centsToStepAlterOctave: exact round-trip for naturals', () => {
-  const SHARP_CENTS = { C: 0, 'C#': 100, D: 200, 'D#': 300, E: 400, F: 500,
-                        'F#': 600, G: 700, 'G#': 800, A: 900, 'A#': 1000, B: 1100 };
-  for (const [step, baseCents] of Object.entries(SHARP_CENTS)) {
-    for (let oct = -1; oct <= 7; oct++) {
-      const cents = (oct + 1) * 1200 + baseCents;
-      const sao = m.centsToStepAlterOctave(cents);
-      assert(sao, `centsToStepAlterOctave should not return null for ${cents}`);
-      assertEqual(sao.step, step);
-      assertEqual(sao.alter, 0);
-      assertEqual(sao.octave, oct);
-      // Verify the round-trip: cents → (step, alter, octave) → cents
-      const back = m.stepAlterOctaveToCents(sao.step, sao.alter, sao.octave);
-      assertEqual(back, cents);
-    }
+test('centsToStepAlterOctave: exact round-trip for naturals and sharps', () => {
+  // Step is always a single letter; alter carries the sharp. So the
+  // cents for C#4 (6100) maps to {step:'C', alter:1, octave:4}, not
+  // {step:'C#', alter:0, octave:4}. This matches OSMD's pitch format
+  // and MusicXML's <step>/<alter> split.
+  const cases = [
+    // [cents, step, alter, octave]
+    [6000, 'C', 0, 4], [6050, 'C', 0.5, 4], [6100, 'C', 1, 4], [6150, 'C', 1.5, 4],
+    [6200, 'D', 0, 4], [6300, 'D', 1, 4],
+    [6400, 'E', 0, 4],
+    [6500, 'F', 0, 4], [6600, 'F', 1, 4],
+    [6700, 'G', 0, 4], [6800, 'G', 1, 4],
+    [6900, 'A', 0, 4], [7000, 'A', 1, 4],
+    [7100, 'B', 0, 4],
+  ];
+  for (const [cents, step, alter, octave] of cases) {
+    const sao = m.centsToStepAlterOctave(cents);
+    assert(sao, `centsToStepAlterOctave should not return null for ${cents}`);
+    assertEqual(sao.step, step, `cents ${cents} step`);
+    assertEqual(sao.alter, alter, `cents ${cents} alter`);
+    assertEqual(sao.octave, octave, `cents ${cents} octave`);
+    // Round-trip via the stepAlterOctaveToCents direction.
+    const back = m.stepAlterOctaveToCents(sao.step, sao.alter, sao.octave);
+    assertEqual(back, cents, `round-trip for ${cents}`);
   }
 });
 
 test('centsToStepAlterOctave: quarter-tones round-trip exactly', () => {
-  // 6050  → ('C', 0.5, 4)
-  // 6150  → ('C#', 0.5, 4)
-  // 6250  → ('D', 0.5, 4)
-  // ...
   // Octave convention: C0 = 1200 cents, so C half-sharp at cents 50 → octave -1.
-  // (centsToPitch returns "C↑-1" for that.)
+  // Step is ALWAYS a single letter A–G; alter carries the sharp/flat
+  // information. This matches OSMD's pitchEnumValues=[C,D,E,F,G,A,B] which
+  // has no sharps/flats — putting 'C#' in step would crash OSMD with
+  // 'undefined.toLowerCase()'.
   const cases = [
     [50,   'C',  0.5, -1],
-    [150,  'C#', 0.5, -1],
+    [150,  'C',  1.5, -1],
     [250,  'D',  0.5, -1],
+    [350,  'D',  1.5, -1],
     [1250, 'C',  0.5, 0],
+    [1350, 'C',  1.5, 0],
     [6050, 'C',  0.5, 4],
-    [6150, 'C#', 0.5, 4],
+    [6150, 'C',  1.5, 4],
     [6250, 'D',  0.5, 4],
-    [6350, 'D#', 0.5, 4],
+    [6350, 'D',  1.5, 4],
     [6450, 'E',  0.5, 4],
-    [6650, 'F#', 0.5, 4],
+    [6650, 'F',  1.5, 4],
     [8150, 'A',  0.5, 5],
   ];
   for (const [cents, step, alter, octave] of cases) {
