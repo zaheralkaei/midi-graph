@@ -94,6 +94,12 @@
       currentHarmonicController.destroy();
       currentHarmonicController = null;
     }
+    // Clear innerHTML so large previous files don't leave stale DOM
+    // (memory pressure on consecutive large loads).
+    document.getElementById('stats-grid').innerHTML = '';
+    document.getElementById('top-transitions').innerHTML = '';
+    const chordSeq = document.getElementById('chord-sequence-list');
+    if (chordSeq) chordSeq.innerHTML = '';
     playBtn.disabled = true;
     stopBtn.disabled = true;
     isPlaying = false;
@@ -473,6 +479,12 @@
   // appropriate parser. Shared by the file picker handler and the demo
   // button handlers (which don't have a real File object).
   async function loadBytes(bytes, label) {
+    // Reset state FIRST so a failed load doesn't leave the previous
+    // file's panels visible (stale graph + stats + sheet music).
+    // The specific parsers (loadMidiBytes, loadMusicXmlText) also call
+    // resetState() but that's idempotent — calling it twice is harmless.
+    resetState();
+    clearError();
     const detected = M.detectFileType(bytes, label);
 
     if (detected.type === 'midi') {
