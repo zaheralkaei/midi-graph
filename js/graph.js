@@ -140,6 +140,10 @@
       .force('collide', d3.forceCollide(28));
 
     function rebuild() {
+      // Node radius (must match the .attr('r', 18) on the circle enter()
+      // below). Used for label positioning (offset to the right of node),
+      // arrow tip clearance, and the collide force.
+      const NODE_R = 18;
       const minProb = +document.getElementById('min-prob').value / 100;
       const minPitch = +document.getElementById('min-pitch').value;
       const maxPitch = +document.getElementById('max-pitch').value;
@@ -217,18 +221,42 @@
           const cents = pitchOf(d.id);
           return activeCount.get(cents) > 0 ? 'node active' : 'node';
         })
-        .each(function(d) { activeName.set(pitchOf(d.id), d.id); })
-        .append('title').text(d => d.id);
+        .each(function(d) { activeName.set(pitchOf(d.id), d.id); });
+      // Tooltip (browser-native <title>, shown on hover). Only attach to
+      // newly-entered circles — appending on every rebuild would stack
+      // titles. The text uses the current d.id / d.count / d.frequency
+      // (which may update across rebuilds when nodes filter in/out).
+      nodeEnter
+        .append('title')
+        .text(d => `${d.id} — ${d.count} occurrence${d.count === 1 ? '' : 's'} (${(d.frequency * 100).toFixed(2)}% of piece)`);
 
-      // ----- Node labels (with text-stroke for contrast against any circle color) -----
+      // ----- Node labels (positioned to the right of each node, with the
+      // absolute frequency appended as a percentage of the whole piece).
+      // Two-line label: line 1 = pitch name (e.g. "C4"), line 2 = "N% of piece"
+      // (e.g. "8%"). Using a tspan lets the two lines share a single text
+      // element so positioning stays simple. dark text with light stroke
+      // works on any background; placed right of the node so it doesn't
+      // overlap the circle's interior — the previous inside-the-circle
+      // placement was hard to read on light-colored nodes (yellow, etc).
       const labelSel = labelGroup.selectAll('text').data(nodes, d => d.id);
       labelSel.exit().remove();
-      labelSel.enter().append('text')
+      const labelEnter = labelSel.enter().append('text')
         .attr('class', 'node-label')
-        .attr('text-anchor', 'middle')
-        .attr('dy', 4)
-        .merge(labelSel)
+        .attr('text-anchor', 'start')
+        .attr('dominant-baseline', 'central')
+        .attr('dx', NODE_R + 6);
+      labelEnter.append('tspan').attr('class', 'node-label-name');
+      labelEnter.append('tspan').attr('class', 'node-label-freq')
+        .attr('x', NODE_R + 6)
+        .attr('dy', '1.1em');
+      labelSel.merge(labelEnter).select('.node-label-name')
         .text(d => d.id);
+      labelSel.merge(labelEnter).select('.node-label-freq')
+        .text(d => {
+          const pct = (d.frequency || 0) * 100;
+          // Two decimals for sub-1% pitches (vp2-1all.mid has many).
+          return `${pct < 1 ? pct.toFixed(2) : pct.toFixed(1)}%`;
+        });
 
       // Edge hover: highlight the edge + swap to the white arrow marker.
       // (Labels are now always visible — was previously toggled via .visible
@@ -252,8 +280,6 @@
         const thicknessOn = document.getElementById('edge-thickness-by-prob').checked;
         const { w, h } = getSize();
         simulation.force('center').x(w / 2).y(h / 2);
-        // Node radius (must match the .attr('r', 18) on enter() below).
-        const NODE_R = 18;
         // Shrink edges by this much past the node circumference so the arrow
         // head doesn't overlap the target node. The marker is anchored at
         // refX=9 and the arrow tip extends a few more units, so we shrink by
@@ -297,6 +323,9 @@
           .attr('y', d => (d.source.y + d.target.y) / 2 - 4);
 
         nodeAll.attr('cx', d => d.x).attr('cy', d => d.y);
+        // Labels are positioned to the right of each node. The text
+        // element's x is the node's x; the dx and dominant-baseline on
+        // the <text> handle the offset.
         labelSel.attr('x', d => d.x).attr('y', d => d.y);
       });
     }

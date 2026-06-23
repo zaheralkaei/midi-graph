@@ -328,6 +328,19 @@ function notesFromEvents(events) {
 // normalize per source, emit D3 nodes + links.
 // ---------------------------------------------------------------------------
 function buildTransitionGraph(notes) {
+  // Absolute frequency per pitch NAME (how often each pitch appears in
+  // the whole piece — used for the "% of piece" annotation on each node).
+  // We count by name rather than by raw cents because two cent values
+  // (e.g. 8150 and 8200) might both round to the same display name
+  // ("A↑5" and "A5" are different names, but if they did collide, we'd
+  // want them summed). The transition-graph logic below also uses names.
+  const freq = new Map();
+  for (const n of notes) {
+    const name = centsToPitch(n);
+    freq.set(name, (freq.get(name) || 0) + 1);
+  }
+  const totalNotes = notes.length || 1;   // avoid divide-by-zero
+
   const counts = new Map();   // cur → Map(nxt → count)
   const totals = new Map();
   for (let i = 0; i < notes.length - 1; i++) {
@@ -351,7 +364,17 @@ function buildTransitionGraph(notes) {
       links.push({ source: curName, target: nxtName, value: count / total });
     }
   }
-  const nodes = Array.from(nodeSet).sort().map(id => ({ id }));
+  // Include every pitch in freq (covers the last note of the piece
+  // which has no outgoing transition).
+  for (const name of freq.keys()) nodeSet.add(name);
+  const nodes = Array.from(nodeSet).sort().map(id => {
+    const count = freq.get(id) || 0;
+    return {
+      id,
+      count,                                  // absolute occurrences
+      frequency: count / totalNotes,          // % of whole piece (0..1)
+    };
+  });
   return { nodes, links };
 }
 

@@ -545,10 +545,36 @@ test('buildTransitionGraph: empty input → empty graph', () => {
   assertEqual(m.buildTransitionGraph([]), { nodes: [], links: [] });
 });
 
-test('buildTransitionGraph: single note → no graph (no transitions)', () => {
+test('buildTransitionGraph: single note → one node, no transitions', () => {
+  // A single note has count 1 and frequency 1.0 (100% of the piece),
+  // but no transitions because there's nothing after it to transition to.
   const g = m.buildTransitionGraph([6000]);
-  assertEqual(g.nodes, []);
   assertEqual(g.links, []);
+  assertEqual(g.nodes.length, 1);
+  assertEqual(g.nodes[0].id, 'C4');
+  assertEqual(g.nodes[0].count, 1);
+  assertEqual(g.nodes[0].frequency, 1);
+});
+
+test('buildTransitionGraph: node.frequency is % of whole piece', () => {
+  // 10 notes, C4 appears 5 times → frequency should be 0.5
+  const notes = [6000, 6000, 6200, 6000, 6400, 6000, 6500, 6400, 6200, 6000];
+  const g = m.buildTransitionGraph(notes);
+  const c4 = g.nodes.find(n => n.id === 'C4');
+  assert(c4, 'C4 should be in nodes');
+  assertEqual(c4.count, 5);                          // 5 occurrences
+  assert(Math.abs(c4.frequency - 0.5) < 1e-9, `C4 freq should be 0.5, got ${c4.frequency}`);
+});
+
+test('buildTransitionGraph: last note counted even with no outgoing transition', () => {
+  // The last note of the piece is never a "source" in transitions, but
+  // it still counts toward absolute frequency.
+  const notes = [6000, 6200, 6400, 6500];   // last note is E4 (6500)
+  const g = m.buildTransitionGraph(notes);
+  const e4 = g.nodes.find(n => n.id === 'E4');
+  assert(e4, 'E4 should be in nodes (last note of piece)');
+  assertEqual(e4.count, 1);
+  assert(Math.abs(e4.frequency - 0.25) < 1e-9);
 });
 
 test('buildTransitionGraph: probabilities sum to 1 per source', () => {

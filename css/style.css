@@ -158,15 +158,22 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .node-label {
   font-size: 11px;
-  fill: #fff;
+  fill: #e8ebf0;                                  /* light text, readable on dark bg */
   /* Text stroke for contrast against any circle color (works on yellow,
-     green, cyan, white, etc.). 1.5px is enough to be readable without
+     green, cyan, white, etc.). 2.5px is enough to be readable without
      making thin letters look heavy. */
-  stroke: rgba(0, 0, 0, 0.85);
-  stroke-width: 1.5px;
+  stroke: rgba(0, 0, 0, 0.95);
+  stroke-width: 2.5px;
   paint-order: stroke fill;
   pointer-events: none;
   user-select: none;
+}
+/* Frequency line: slightly dimmer so the pitch name is the primary
+   identifier. Same dark stroke ensures readability on any background. */
+.node-label .node-label-freq {
+  font-size: 9.5px;
+  fill: #aab0bc;
+  font-weight: 400;
 }
 .link-label {
   font-size: 9.5px;
