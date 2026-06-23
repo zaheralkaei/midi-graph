@@ -128,11 +128,24 @@
     // the melody.
     let sheetRendered = false;
     try {
-      // Pass the full analyze result so the synth can pick the best
-      // track and use the file's declared time signature instead of
-      // always defaulting to 4/4. (Old signature (events, ticksPerQuarter)
-      // still works for back-compat with direct callers / tests.)
-      const syntheticXml = M.buildSyntheticMusicXml(result);
+      // Try webmscore first for professional-grade engraving (proper beam
+      // grouping, voice separation, slurs, articulations, key signature).
+      // If the WASM fails to load, fails to convert, or the worker dies,
+      // we silently fall back to the hand-rolled synth. The user always
+      // sees sheet music — they just don't see "engine failed" errors
+      // if webmscore isn't available.
+      let xmlText = null;
+      if (M.convertMidiViaWebMscore) {
+        xmlText = await M.convertMidiViaWebMscore(bytes);
+        if (xmlText) console.log('[synth] used webmscore (high-fidelity)');
+      }
+      if (!xmlText) {
+        // Fall back to hand-rolled synth. Pass the full analyze result so
+        // it picks the best track and uses the file's time signature.
+        xmlText = M.buildSyntheticMusicXml(result);
+        if (xmlText) console.log('[synth] used local synth (webmscore unavailable)');
+      }
+      const syntheticXml = xmlText;
       if (M.isSheetAvailable()) {
         sheetPanel.classList.remove('hidden');
         await M.renderSheet(sheetContainer, syntheticXml);
