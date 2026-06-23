@@ -295,4 +295,65 @@
     stopBtn.disabled = true;
     playbackInfo.textContent = 'Stopped.';
   });
+
+  // ----- Info modal (concept and implementation by Zaher Alkaei) -----
+  // The modal is a plain <div role="dialog"> in index.html, hidden by
+  // default. The "open" class on the wrapper fades it in and re-enables
+  // pointer events; the wrapper has pointer-events: none when hidden so
+  // it never intercepts page clicks underneath. Closing is idempotent
+  // (a no-op if already closed) so ESC spam and double-clicks are safe.
+  const infoBtn = document.getElementById('info-btn');
+  const infoModal = document.getElementById('info-modal');
+  const infoCloseBtn = infoModal.querySelector('.info-close');
+  let lastFocusBeforeModal = null;  // restored on close for a11y
+
+  function openInfo() {
+    if (infoModal.classList.contains('open')) return;
+    lastFocusBeforeModal = document.activeElement;
+    infoModal.classList.add('open');
+    infoModal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('info-open');
+    // Defer focus so the entry transition doesn't get a janky
+    // outline flash on the close button.
+    setTimeout(() => infoCloseBtn.focus(), 50);
+  }
+  function closeInfo() {
+    if (!infoModal.classList.contains('open')) return;
+    infoModal.classList.remove('open');
+    infoModal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('info-open');
+    if (lastFocusBeforeModal && lastFocusBeforeModal.focus) {
+      lastFocusBeforeModal.focus();
+    }
+  }
+  infoBtn.addEventListener('click', openInfo);
+  infoCloseBtn.addEventListener('click', closeInfo);
+  // Any element with [data-info-dismiss="1"] (backdrop, close button)
+  // closes the modal. We listen on the wrapper and filter by attribute
+  // so we don't have to attach to each dismiss target individually.
+  infoModal.addEventListener('click', (e) => {
+    if (e.target.closest('[data-info-dismiss="1"]')) closeInfo();
+  });
+  // ESC closes from anywhere; if the modal is already closed, this is
+  // a no-op (closeInfo short-circuits).
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && infoModal.classList.contains('open')) {
+      e.preventDefault();
+      closeInfo();
+    }
+  });
+
+  // Spacebar toggles Play/Stop when no text input is focused. The
+  // shortcut is also advertised inside the info modal so users know
+  // it exists. Ignored if a modifier is held (so Ctrl+Space etc.
+  // still work for OS shortcuts).
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (infoModal.classList.contains('open')) return;  // space inside modal scrolls, don't intercept
+    e.preventDefault();
+    if (isPlaying) stopBtn.click();
+    else if (currentPlayback) playBtn.click();
+  });
 })();

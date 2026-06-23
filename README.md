@@ -53,7 +53,9 @@ we want.
   self-loop count + share, pitch range, **and every transition
   sorted by probability** (not just the top 5).
 - **Per-node annotation** — every node is labeled with the pitch name
-  (e.g. `C4`, `A#↑3` for a quarter-tone) and the absolute frequency
+  (e.g. `C4`, or for quarter-tones the demo shows `A#↑3` / `D#↑4`
+  which are the sharp-spelled enharmonic names for `B↓3` / `E↓4` —
+  see "Quarter-tone naming" below) and the absolute frequency
   as a percentage of the whole piece (e.g. `12.25%`).
 - **Per-edge annotation** — every transition label shows the
   conditional probability `P(target | source)` as a percentage.
@@ -138,6 +140,19 @@ form, e.g. `C↑4`, `D#↑4`, `F4`. The `↑` (Unicode U+2191) means
 The legacy long form is `C half-sharp 4` / `C half-flat 4`. It's
 still accepted by the regex in `pitchOf()` (graph.js) for backwards
 compatibility but the app emits only the short form.
+
+**Enharmonic spelling gotcha (the demo specifically):** the shipped
+`ya-tyra.mxl` (a piece using Arabic maqam quarter-tones) encodes
+its accidentals as half-FLATS, so the source XML has elements like
+`<step>B</step><alter>-0.5</alter><octave>3</octave>` for `B↓3`
+(= 5850 cents) and `<step>E</step><alter>-0.5</alter><octave>4</octave>`
+for `E↓4` (= 6350 cents). But `centsToPitch` reports them as `A#↑3`
+and `D#↑4` — the SHARP-spelled enharmonic names — because it always
+picks the closest note above (or at) the cents value, and 5850¢ is
+50¢ *above* A#3 (5800¢) rather than 50¢ *below* B3 (5900¢). The two
+spellings describe the same pitch; the app just consistently picks
+the sharp form. The MIDI file demo has no quarter-tones (MIDI bytes
+are 12-TET only).
 
 Eighth-tones (alter=0.25, 0.75) round to the nearest quarter-tone
 for display only — graph nodes, transitions, and stats are all
@@ -367,12 +382,17 @@ stats, graph, and playback all work identically regardless of source.
 
 - **Choose File** — upload any supported file. Drag-and-drop is
   supported in most browsers.
-- **Load demo (Bach Allemande, .mid)** / **Load demo (Bach
-  Allemande, .mxl)** — the same piece in two formats. The MIDI
-  form (`vp2-1all.mid`, 1094 notes, 30 pitches) is the standard
-  12-TET export. The compressed MusicXML form (`ya-tyra.mxl`,
-  243 notes, 8 pitches including 2 quarter-tones — `A#↑3` and
-  `D#↑4`) preserves the microtonal resolution.
+- **Load demo (Bach Allemande, .mid)** — J.S. Bach's Allemande from
+  Violin Partita No. 2 in D minor, BWV 1004, in standard 12-TET MIDI
+  (`vp2-1all.mid`, 1094 notes, 30 unique pitches, 193 transitions).
+- **Load demo (ya-tyra, .mxl)** — "يا طيرة طيري يا حمامة" (O little
+  bird, fly O pigeon), a traditional Arabic maqam piece in compressed
+  MusicXML (`ya-tyra.mxl`, 243 notes, 8 unique pitches, 28 transitions,
+  2 quarter-tones — `A#↑3` and `D#↑4` in the app's sharp-spelled
+  naming; the source XML actually has them as `B↓3` and `E↓4`).
+  Demonstrates .mxl (zip) extraction, quarter-tone rendering, and
+  the synthetic MusicXML fallback that makes sheet music work for any
+  file type.
 - **▶ Play** / **■ Stop** — playback. Stop cancels scheduled
   future notes, releases active voices, and clears the
   per-playback state so the next Play works correctly.
@@ -407,8 +427,8 @@ js/playback.js           # Tone.js playback (real durations, multi-tempo, replay
 js/sheet.js              # OSMD sheet music rendering
 js/app.js                # glue layer — wires the modules together
 examples/
-  vp2-1all.mid            # demo file — Bach Allemande BWV 1004, MIDI form (no quarter-tones)
-  ya-tyra.mxl             # same piece — compressed MusicXML (with quarter-tones A#↑3, D#↑4)
+  vp2-1all.mid            # demo file — Bach Allemande BWV 1004, MIDI form (12-TET, 1094 notes)
+  ya-tyra.mxl             # demo file — Arabic maqam "ya tayra", compressed MusicXML (with quarter-tones)
 scripts/
   serve-nocache.py        # local dev server with no-cache headers (for development)
 tests/

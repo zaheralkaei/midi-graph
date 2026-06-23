@@ -28,7 +28,14 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>midi-graph</h1>
+  <h1>midi-graph
+    <!-- Info button — opens a modal with a quick orientation for first-time
+         users. Concept and implementation by Zaher Alkaei. Keyboard
+         accessible (button can be focused and activated with Enter/Space);
+         ESC, click on the backdrop, and the explicit close button all
+         dismiss the modal. -->
+    <button type="button" id="info-btn" class="info-btn" aria-label="Show info about this app" aria-haspopup="dialog">ℹ</button>
+  </h1>
   <p class="subtitle">Upload a MIDI or MusicXML file. See the note transition graph. Hear it played back. View the sheet music.</p>
 
   <!-- Upload panel — always visible so you can swap files. -->
@@ -36,7 +43,7 @@
     <div class="upload-row">
       <input type="file" id="file" accept=".mid,.midi,.musicxml,.xml,.mxl">
       <button type="button" id="load-demo-midi">Load demo (Bach Allemande, .mid)</button>
-      <button type="button" id="load-demo-xml">Load demo (Bach Allemande, .mxl)</button>
+      <button type="button" id="load-demo-xml">Load demo (ya-tyra, .mxl)</button>
       <span id="filename-display" class="filename-display"></span>
     </div>
     <!-- Visible error region. Hidden by default; populated on parse failure
@@ -85,13 +92,69 @@
     </div>
   </div>
 
-  <!-- Sheet music panel — only shown for MusicXML files. Placed last so
-       the natural reading flow is: stats (top summary) -> graph (visual
-       structure) -> play (hear it) -> sheet (notation reference for what
-       was played). -->
+  <!-- Sheet music panel — shown for both file types. MusicXML renders
+       directly; MIDI synthesizes MusicXML from the parsed note_on /
+       note_off events (see buildSyntheticMusicXml in js/musicxml.js)
+       since MIDI carries no notation data. Placed last so the natural
+       reading flow is: stats (top summary) -> graph (visual structure)
+       -> play (hear it) -> sheet (notation reference for what was
+       played). -->
   <div class="panel hidden" id="sheet-panel">
     <h2>Sheet music</h2>
     <div id="sheet-container"></div>
+  </div>
+</div>
+
+<!-- Info modal — hidden by default, shown when #info-btn is clicked.
+     Plain HTML here (not templated) so search engines and screen readers
+     can index the content. The "open" class is toggled by app.js. -->
+<div id="info-modal" class="info-modal" role="dialog" aria-modal="true" aria-labelledby="info-modal-title" aria-hidden="true">
+  <div class="info-backdrop" data-info-dismiss="1"></div>
+  <div class="info-card" role="document">
+    <button type="button" class="info-close" aria-label="Close" data-info-dismiss="1">×</button>
+    <h2 id="info-modal-title">About midi-graph</h2>
+
+    <p><strong>midi-graph</strong> turns a MIDI or MusicXML file into a visual map of which notes follow which. Designed and implemented by <strong>Zaher Alkaei</strong>.</p>
+
+    <h3>What you get</h3>
+    <ul>
+      <li><strong>Transition graph</strong> — each node is a unique pitch, each arrow is a "this note is followed by that note" transition. Arrow width ∝ probability; arrow direction shows flow.</li>
+      <li><strong>Stats panel</strong> — total notes, unique pitches, total transitions, self-loops + share, pitch range, <em>and every transition sorted by probability</em> (not just the top 5).</li>
+      <li><strong>Sheet music</strong> — real notation. MusicXML renders directly; MIDI files get a synthesized score from the note_on / note_off pairs.</li>
+      <li><strong>Playback</strong> — hear the piece with Tone.js. Hover on the graph: notes glow when they sound. Stop works mid-piece, replay works after Stop, and the natural end also resets correctly.</li>
+    </ul>
+
+    <h3>How to use it</h3>
+    <ol>
+      <li>Click <strong>Load demo (Bach Allemande, .mid)</strong> or <strong>Load demo (ya-tyra, .mxl)</strong> for a one-click example, or use <strong>Choose File</strong> to upload your own. Drag-and-drop also works in most browsers.</li>
+      <li>Read the <strong>Summary</strong> panel for an at-a-glance overview.</li>
+      <li>Explore the <strong>Transition graph</strong>: each node shows the pitch + its share of the piece; each arrow shows the conditional probability of "next note given current note". Hover an arrow to see the count + percentage.</li>
+      <li>Press <strong>▶ Play</strong> to hear the piece — the graph glows on every sounding pitch. <strong>■ Stop</strong> works mid-piece; you can replay immediately.</li>
+      <li>Scroll down to the <strong>Sheet music</strong> panel for the notation.</li>
+    </ol>
+
+    <h3>Keyboard shortcuts</h3>
+    <ul>
+      <li><kbd>Space</kbd> — Play / Stop (when not focused on a text input)</li>
+      <li><kbd>Esc</kbd> — close this info dialog</li>
+    </ul>
+
+    <h3>The two demos are different pieces</h3>
+    <p>The <strong>Bach Allemande</strong> demo is the Allemande from J.S. Bach's Violin Partita No. 2 in D minor, BWV 1004, in standard 12-TET MIDI (1094 notes, 30 pitches). The <strong>ya-tyra</strong> demo is the Arabic maqam piece "يا طيرة طيري يا حمامة" (O little bird, fly O pigeon) in compressed MusicXML (243 notes, 8 pitches, with quarter-tones). They showcase different features: Bach → dense transitions + synthetic sheet music from MIDI; ya-tyra → microtonal support + .mxl (zip) extraction + real notation.</p>
+
+    <h3>Quarter-tones</h3>
+    <p>Quarter-tones are preserved exactly as cents (1/100 of a semitone). The display uses the compact form <code>C↑4</code> / <code>D#↑4</code> for half-sharps. The ya-tyra demo's source XML actually encodes the quarter-tones as half-FLATS (B↓3 and E↓4), but the app reports them as the sharp-spelled enharmonic names A#↑3 and D#↑4 — same pitch, different spelling. See the README for the full details.</p>
+
+    <h3>File support</h3>
+    <ul>
+      <li><strong>MIDI</strong> (.mid, .midi) — parsed from the file's bytes. Cents derived from MIDI note number (no quarter-tones — MIDI is 12-TET).</li>
+      <li><strong>MusicXML</strong> (.musicxml, .xml) — parsed as XML. Full quarter-tone support (alter can be −1.5, −0.5, 0.5, 1.5).</li>
+      <li><strong>Compressed MusicXML</strong> (.mxl) — a zip containing container.xml + the score. Extracted in the browser via fflate; no server needed.</li>
+    </ul>
+    <p>The file type is detected from the file's <em>contents</em> (first 4 bytes), not the extension — so a mis-named file still routes to the right parser.</p>
+
+    <h3>Credits</h3>
+    <p>Concept and implementation by <strong>Zaher Alkaei</strong>. Built with <a href="https://d3js.org/" target="_blank" rel="noopener">D3 v7</a>, <a href="https://tonejs.github.io/" target="_blank" rel="noopener">Tone.js</a>, <a href="https://opensheetmusicdisplay.org/" target="_blank" rel="noopener">OpenSheetMusicDisplay</a>, and <a href="https://github.com/101arrowz/fflate" target="_blank" rel="noopener">fflate</a> — all bundled locally in <code>vendor/</code> with CDN fallbacks.</p>
   </div>
 </div>
 

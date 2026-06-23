@@ -17,7 +17,15 @@ body {
   min-height: 100vh;
 }
 .wrap { max-width: 1280px; margin: 0 auto; padding: 20px; }
-h1 { margin: 0 0 4px 0; font-size: 22px; font-weight: 500; letter-spacing: 0.3px; }
+h1 {
+  margin: 0 0 4px 0;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
 .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
 
 .panel {
@@ -226,4 +234,163 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ----- Playback ----- */
 .playback-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ----- Info button + modal (concept & implementation by Zaher Alkaei) ----- */
+
+/* Inline info button next to the page title. The ℹ glyph is the universal
+   "more info" affordance; aria-label gives it a proper accessible name
+   for screen readers since the visible character is decorative. */
+.info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 8px;
+  /* Slightly down from the text baseline so it visually aligns with the
+     lowercase x-height of "midi-graph" rather than the cap height. */
+  vertical-align: 2px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.info-btn:hover, .info-btn:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(0, 229, 255, 0.08);
+  outline: none;
+}
+
+/* Modal container — fixed full-viewport, hidden by default. The "open"
+   class fades it in. pointer-events: none on the wrapper prevents the
+   hidden modal from intercepting clicks on the page below; the wrapper
+   re-enables pointer events only when .open is set. */
+.info-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.info-modal.open {
+  pointer-events: auto;
+  opacity: 1;
+}
+/* Backdrop — semi-transparent dark wash. Clicking it dismisses (handled
+   in app.js via the [data-info-dismiss] attribute). */
+.info-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  cursor: pointer;
+}
+/* The card itself — bounded, scrollable, looks like a real modal. */
+.info-card {
+  position: relative;
+  max-width: 720px;
+  width: 100%;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px 28px 28px 28px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 229, 255, 0.08);
+  /* Subtle entry animation; the wrapper handles opacity so this just
+     nudges the card into place. */
+  transform: translateY(8px) scale(0.985);
+  transition: transform 180ms ease;
+}
+.info-modal.open .info-card {
+  transform: translateY(0) scale(1);
+}
+/* Modal typography — h2 is the modal title, h3 is section heading. */
+.info-card h2 {
+  margin: 0 0 14px 0;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text);
+  padding-right: 32px;  /* room for the close button */
+}
+.info-card h3 {
+  margin: 18px 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.info-card p, .info-card li {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.info-card ul, .info-card ol {
+  margin: 6px 0 8px 0;
+  padding-left: 20px;
+}
+.info-card li {
+  margin: 3px 0;
+}
+.info-card code, .info-card kbd {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+}
+.info-card kbd {
+  background: rgba(0, 229, 255, 0.1);
+  border-color: rgba(0, 229, 255, 0.3);
+  color: var(--accent);
+}
+.info-card a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.info-card a:hover { text-decoration: underline; }
+.info-card strong { color: var(--text); font-weight: 600; }
+.info-card em { color: var(--muted); font-style: normal; }
+
+/* Close (×) button — top-right of the card. data-info-dismiss=1 makes
+   app.js wire it up as a dismiss trigger so the JS stays declarative. */
+.info-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 120ms, background 120ms;
+}
+.info-close:hover, .info-close:focus-visible {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+
+/* When the modal is open, freeze background scrolling so the page under
+   the modal doesn't shift when the user scrolls inside the card. */
+body.info-open {
+  overflow: hidden;
+}
 .playback-row .info { color: var(--muted); font-size: 12px; }
