@@ -91,6 +91,27 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .top-transitions .pct { color: var(--accent); margin-left: 6px; }
 
+/* ----- Sheet music ----- */
+/* Paper-like background for the OSMD-rendered sheet. OSMD defaults to a
+   dark staff which clashes with the dark page; giving the container a
+   light background makes the sheet music look like a sheet of paper on
+   the dark dashboard. The OSMD svg fills the container, so this
+   background color shows through wherever OSMD doesn't paint (margins,
+   system gaps). */
+#sheet-container {
+  background: #f5f4ee;
+  border-radius: 4px;
+  padding: 12px;
+  /* OSMD draws staff lines in dark gray by default — readable on light bg. */
+  color: #1a1a1a;
+  min-height: 120px;
+}
+#sheet-container svg {
+  /* Center the score horizontally inside the container. */
+  display: block;
+  margin: 0 auto;
+}
+
 /* ----- Graph ----- */
 .graph-wrap { position: relative; }
 #graph { width: 100%; height: 640px; background: #0a0b0e; border-radius: 4px; }
@@ -114,16 +135,25 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   user-select: none;
 }
 .link-label {
-  font-size: 9px;
-  fill: #888;
+  font-size: 9.5px;
+  font-weight: 500;
+  fill: #c8cdd4;
+  /* Dark stroke behind the text for legibility on any background — works
+     whether an edge passes over a node, a self-loop arc, or empty space. */
+  stroke: rgba(0, 0, 0, 0.95);
+  stroke-width: 2.5px;
+  paint-order: stroke fill;
   pointer-events: none;
   user-select: none;
-  /* Hidden by default — labels overlap badly in dense graphs. Shown on
-     edge hover via the .visible class set in graph.js. */
-  opacity: 0;
-  transition: opacity 0.1s;
+  /* Always visible — the user wants to read probabilities without hovering.
+     Was opacity 0 + .visible class set on edge hover; removed so labels
+     show all the time. */
 }
-.link-label.visible { opacity: 1; }
+.link-label.dim {
+  /* Slightly faded for very small transitions so dense graphs stay
+     readable. Still fully visible — just less attention-grabbing. */
+  fill: #8a93a0;
+}
 .self-loop-label {
   font-size: 9px;
   fill: var(--accent);

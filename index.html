@@ -54,13 +54,8 @@
     <div class="top-transitions" id="top-transitions"></div>
   </div>
 
-  <!-- Sheet music panel — only shown for MusicXML files. -->
-  <div class="panel hidden" id="sheet-panel">
-    <h2>Sheet music</h2>
-    <div id="sheet-container"></div>
-  </div>
-
-  <!-- Graph panel -->
+  <!-- Graph panel — comes first so users see the structure before they
+       play or look at the notation. -->
   <div class="panel hidden" id="graph-panel">
     <h2>Transition graph</h2>
     <div class="graph-wrap">
@@ -78,7 +73,9 @@
     </div>
   </div>
 
-  <!-- Playback -->
+  <!-- Playback — placed between graph and sheet music so the user can
+       play the graph they just saw, then look at the corresponding
+       notation below. -->
   <div class="panel">
     <h2>Playback</h2>
     <div class="playback-row">
@@ -86,6 +83,15 @@
       <button class="danger" id="stop-btn" disabled>■ Stop</button>
       <span class="info" id="playback-info">Upload a MIDI or MusicXML file first.</span>
     </div>
+  </div>
+
+  <!-- Sheet music panel — only shown for MusicXML files. Placed last so
+       the natural reading flow is: stats (top summary) -> graph (visual
+       structure) -> play (hear it) -> sheet (notation reference for what
+       was played). -->
+  <div class="panel hidden" id="sheet-panel">
+    <h2>Sheet music</h2>
+    <div id="sheet-container"></div>
   </div>
 </div>
 

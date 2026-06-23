@@ -178,7 +178,9 @@
         .attr('class', 'link-label')
         .attr('text-anchor', 'middle');
       const linkLabelAll = linkLabelEnter.merge(linkLabelSel)
-        .text(d => (d.value * 100).toFixed(0) + '%');
+        .text(d => (d.value * 100).toFixed(0) + '%')
+        // Dim low-probability labels so dense graphs stay readable.
+        .attr('class', d => d.value < 0.1 ? 'link-label dim' : 'link-label');
 
       // ----- Nodes -----
       const nodeSel = nodeGroup.selectAll('circle').data(nodes, d => d.id);
@@ -211,22 +213,17 @@
         .merge(labelSel)
         .text(d => d.id);
 
-      // Edge hover: highlight the edge + swap to the white arrow marker +
-      // show its label briefly.
+      // Edge hover: highlight the edge + swap to the white arrow marker.
+      // (Labels are now always visible — was previously toggled via .visible
+      // class on hover, but that's gone.)
       linkAll
         .on('mouseenter', function(ev, d) {
           d3.select(this).attr('stroke', '#fff').attr('stroke-opacity', 1)
             .attr('marker-end', 'url(#arrow-hover)');
-          const id = d.source + '->' + d.target;
-          linkLabelGroup.selectAll('text').filter(td => td.source + '->' + td.target === id)
-            .classed('visible', true);
         })
         .on('mouseleave', function(ev, d) {
           d3.select(this).attr('stroke', '#666').attr('stroke-opacity', 0.55)
             .attr('marker-end', 'url(#arrow)');
-          const id = d.source + '->' + d.target;
-          linkLabelGroup.selectAll('text').filter(td => td.source + '->' + td.target === id)
-            .classed('visible', false);
         });
 
       // ----- Tick -----
