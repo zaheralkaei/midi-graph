@@ -333,7 +333,158 @@
     return { graph, stats, events, ticksPerQuarter, parts, measures };
   }
 
-  const api = { parseMusicXml, analyzeMusicXml, pitchToCents };
+  // ---------------------------------------------------------------------------
+// buildSyntheticMusicXml(events, ticksPerQuarter) → MusicXML 3.1 string
+//
+// Synthesizes a MusicXML score from a parsed MIDI event list so .mid files
+// can also get a sheet-music render. Caveats:
+//   - Notes use each note's actual duration (note_on → note_off pairs).
+//     Unmatched note_ons (no following note_off) get a default quarter.
+//   - One measure = 4 quarters (4/4 time, fixed).
+//   - No dynamics, articulations, beaming, slurs, key signature, or
+//     tempo markings — just pitches and approximate durations.
+//   - Quarter-tones come through exactly because cents → step/alter/
+//     octave uses QUARTER_TONE_NAMES.
+//
+// This is good enough to read the melody as sheet music; not good
+// enough to use as the authoritative notation.
+// ---------------------------------------------------------------------------
+function buildSyntheticMusicXml(events, ticksPerQuarter) {
+  // Pair note_on with note_off (same logic as playback.js).
+  const pending = new Map();   // cents → tickOn
+  const notes = [];             // [{ startTick, durTick, cents }]
+  for (const ev of events) {
+    if (ev.type === 'on') {
+      pending.set(ev.note, ev.timeTicks);
+    } else if (ev.type === 'off') {
+      const tOn = pending.get(ev.note);
+      if (tOn != null) {
+        notes.push({
+          startTick: tOn,
+          durTick: Math.max(1, ev.timeTicks - tOn),
+          cents: ev.note,
+        });
+        pending.delete(ev.note);
+      }
+    }
+  }
+  // Unmatched note_ons get a default quarter.
+  const defaultDur = ticksPerQuarter || 480;
+  for (const [cents, tOn] of pending) {
+    notes.push({ startTick: tOn, durTick: defaultDur, cents });
+  }
+  // Sort by start time so the score reads top-to-bottom.
+  notes.sort((a, b) => a.startTick - b.startTick);
+
+  // Pick note durations as MusicXML divisions. Use the actual durTick
+  // (MusicXML accepts any integer <duration>). The <type> tag is purely
+  // for display and we set it to the closest standard duration that fits.
+  const q = ticksPerQuarter || 480;
+  const STD_DURATIONS = [
+    { name: '16th',    div: q / 4 },
+    { name: 'eighth',  div: q / 2 },
+    { name: 'quarter', div: q },
+    { name: 'half',    div: q * 2 },
+    { name: 'whole',   div: q * 4 },
+  ];
+  function durNameFor(ticks) {
+    const std = STD_DURATIONS.filter(d => d.div <= ticks).pop();
+    return std ? std.name : '16th';
+  }
+
+  // Group notes by measure (4/4 time). MEASURE_TICKS = q * 4 = 1920.
+  // If a note's duration exceeds the remaining ticks in its measure, we
+  // push it to a "carryover" list that gets emitted at the START of the
+  // next measure. This preserves pitch presence at the cost of putting
+  // the carried note visually out-of-order (acceptable for a synthesized
+  // score — better than silently dropping it).
+  const MEASURE_TICKS = q * 4;
+  const byMeasure = new Map();
+  for (const n of notes) {
+    const measIdx = Math.floor(n.startTick / MEASURE_TICKS);
+    if (!byMeasure.has(measIdx)) byMeasure.set(measIdx, []);
+    byMeasure.get(measIdx).push({
+      cents: n.cents,
+      divisions: Math.max(1, n.durTick),
+      durName: durNameFor(n.durTick),
+    });
+  }
+  if (byMeasure.size === 0) byMeasure.set(0, []);
+
+  // Emit measures, processing carryover between them.
+  const xml = [];
+  xml.push('<?xml version="1.0" encoding="UTF-8"?>');
+  xml.push('<score-partwise version="3.1">');
+  xml.push('  <part-list>');
+  xml.push('    <score-part id="P1"><part-name>Synthesized</part-name></score-part>');
+  xml.push('  </part-list>');
+  xml.push('  <part id="P1">');
+
+  const sortedMeas = Array.from(byMeasure.keys()).sort((a, b) => a - b);
+  let carryover = [];
+  for (const m of sortedMeas) {
+    xml.push(`    <measure number="${m + 1}">`);
+    const ns = byMeasure.get(m);
+    let remaining = MEASURE_TICKS;
+    let ni = 0;
+    // Loop until both no more notes AND no more remaining space.
+    while (ni < ns.length || carryover.length > 0 || remaining > 0) {
+      const cur = carryover.length ? carryover.shift() : ns[ni++];
+      if (!cur) {
+        // No more notes; fill remaining with rests.
+        const restDur = STD_DURATIONS.filter(d => d.div <= remaining).pop();
+        if (!restDur) break;
+        xml.push(`      <note>`);
+        xml.push(`        <rest/>`);
+        xml.push(`        <duration>${restDur.div}</duration>`);
+        xml.push(`        <voice>1</voice>`);
+        xml.push(`        <type>${restDur.name}</type>`);
+        xml.push(`      </note>`);
+        remaining -= restDur.div;
+        continue;
+      }
+      if (cur.divisions <= remaining) {
+        const sao = M.centsToStepAlterOctave(cur.cents);
+        if (sao) {
+          xml.push(`      <note>`);
+          xml.push(`        <pitch>`);
+          xml.push(`          <step>${sao.step}</step>`);
+          if (sao.alter) xml.push(`          <alter>${sao.alter}</alter>`);
+          xml.push(`          <octave>${sao.octave}</octave>`);
+          xml.push(`        </pitch>`);
+          xml.push(`        <duration>${cur.divisions}</duration>`);
+          xml.push(`        <voice>1</voice>`);
+          xml.push(`        <type>${cur.durName}</type>`);
+          xml.push(`      </note>`);
+        }
+        remaining -= cur.divisions;
+      } else {
+        // Doesn't fit — carryover to next measure.
+        carryover.push(cur);
+        // If there's room for a rest, fill with the largest fitting rest.
+        const restDur = STD_DURATIONS.filter(d => d.div <= remaining).pop();
+        if (restDur) {
+          xml.push(`      <note>`);
+          xml.push(`        <rest/>`);
+          xml.push(`        <duration>${restDur.div}</duration>`);
+          xml.push(`        <voice>1</voice>`);
+          xml.push(`        <type>${restDur.name}</type>`);
+          xml.push(`      </note>`);
+          remaining -= restDur.div;
+        } else {
+          break;  // no room for rest either; carryover will be processed next measure
+        }
+      }
+    }
+    xml.push(`    </measure>`);
+  }
+
+  xml.push('  </part>');
+  xml.push('</score-partwise>');
+  return xml.join('\n');
+}
+
+const api = { parseMusicXml, analyzeMusicXml, pitchToCents, buildSyntheticMusicXml };
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
   }

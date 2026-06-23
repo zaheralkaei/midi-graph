@@ -105,7 +105,7 @@
   }
 
   // Load a MIDI file (Uint8Array of bytes).
-  function loadMidiBytes(bytes, label) {
+  async function loadMidiBytes(bytes, label) {
     resetState();
     clearError();
     filenameDisplay.textContent = label;
@@ -119,6 +119,33 @@
       return;
     }
     finishLoad(result);
+    // Render sheet music for MIDI too — synthesize MusicXML from the parsed
+    // events and pass it to OSMD. MIDI doesn't carry notation data, so the
+    // rendered score uses each note's actual duration (note_on → note_off
+    // pairs) and the standard 5 MusicXML note types (whole/half/quarter/
+    // eighth/16th) but no dynamics, articulations, or key signature. Still
+    // much better than "no sheet music for MIDI files" — the user can read
+    // the melody.
+    let sheetRendered = false;
+    try {
+      const syntheticXml = M.buildSyntheticMusicXml(result.events, result.ticksPerQuarter);
+      if (M.isSheetAvailable()) {
+        sheetPanel.classList.remove('hidden');
+        await M.renderSheet(sheetContainer, syntheticXml);
+        sheetRendered = sheetContainer.children.length > 0;
+      } else {
+        sheetPanel.classList.remove('hidden');
+        sheetContainer.innerHTML = '<p style="color: var(--muted);">Sheet music renderer (OSMD) failed to load. The transition graph still works.</p>';
+      }
+    } catch (e) {
+      // Synthetic MusicXML synthesis failed (very rare). Don't block the
+      // graph — just hide the sheet panel and log.
+      console.warn('Synthetic MusicXML render failed:', e);
+      sheetPanel.classList.add('hidden');
+    }
+    if (sheetRendered) {
+      sheetPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
 
   // Load a MusicXML file (text).
@@ -188,7 +215,7 @@
     const detected = M.detectFileType(bytes, label);
 
     if (detected.type === 'midi') {
-      loadMidiBytes(bytes, label);
+      await loadMidiBytes(bytes, label);
     } else if (detected.type === 'musicxml') {
       const text = new TextDecoder('utf-8').decode(bytes);
       await loadMusicXmlText(text, label);

@@ -88,18 +88,20 @@
 
     function play() {
       return new Promise((resolve) => {
-        if (!notes.length || stopped) {
-          resolve(0);
-          return;
-        }
-        // Guard against double-play: if there are still scheduled timers, a
-        // previous play() is in flight. Bail out (the outer app.js already
-        // disables the Play button, but Tone.start() is async and can race).
-        if (scheduledTimers.length > 0) {
-          resolve(0);
-          return;
-        }
+        // Reset stopped FIRST, before the guard. Otherwise: after a Stop,
+        // stopped stays true forever and every subsequent play() bails at
+        // line `if (... || stopped)`. The reset has to happen before the
+        // bail check so a Stop→Play sequence works.
         stopped = false;
+        if (!notes.length || scheduledTimers.length > 0) {
+          // Bail cases:
+          //   - no notes in this playback instance (shouldn't happen)
+          //   - previous play() is still in flight (double-play guard;
+          //     outer app.js already disables the Play button, but
+          //     Tone.start() is async and can race)
+          resolve(0);
+          return;
+        }
         const startWallClock = Tone.now() + 0.1;
 
         for (const n of notes) {

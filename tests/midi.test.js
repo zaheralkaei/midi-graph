@@ -685,6 +685,66 @@ test('computeStats: all_transitions includes self-loops when present', () => {
   assertEqual(stats.all_transitions[0].probability, 1);
 });
 
+// ---------------------------------------------------------------------------
+// centsToStepAlterOctave — inverse of stepAlterOctaveToCents, used to
+// synthesize MusicXML from MIDI events so .mid files can also render sheet
+// music.
+// ---------------------------------------------------------------------------
+test('centsToStepAlterOctave: exact round-trip for naturals', () => {
+  const SHARP_CENTS = { C: 0, 'C#': 100, D: 200, 'D#': 300, E: 400, F: 500,
+                        'F#': 600, G: 700, 'G#': 800, A: 900, 'A#': 1000, B: 1100 };
+  for (const [step, baseCents] of Object.entries(SHARP_CENTS)) {
+    for (let oct = -1; oct <= 7; oct++) {
+      const cents = (oct + 1) * 1200 + baseCents;
+      const sao = m.centsToStepAlterOctave(cents);
+      assert(sao, `centsToStepAlterOctave should not return null for ${cents}`);
+      assertEqual(sao.step, step);
+      assertEqual(sao.alter, 0);
+      assertEqual(sao.octave, oct);
+      // Verify the round-trip: cents → (step, alter, octave) → cents
+      const back = m.stepAlterOctaveToCents(sao.step, sao.alter, sao.octave);
+      assertEqual(back, cents);
+    }
+  }
+});
+
+test('centsToStepAlterOctave: quarter-tones round-trip exactly', () => {
+  // 6050  → ('C', 0.5, 4)
+  // 6150  → ('C#', 0.5, 4)
+  // 6250  → ('D', 0.5, 4)
+  // ...
+  // Octave convention: C0 = 1200 cents, so C half-sharp at cents 50 → octave -1.
+  // (centsToPitch returns "C↑-1" for that.)
+  const cases = [
+    [50,   'C',  0.5, -1],
+    [150,  'C#', 0.5, -1],
+    [250,  'D',  0.5, -1],
+    [1250, 'C',  0.5, 0],
+    [6050, 'C',  0.5, 4],
+    [6150, 'C#', 0.5, 4],
+    [6250, 'D',  0.5, 4],
+    [6350, 'D#', 0.5, 4],
+    [6450, 'E',  0.5, 4],
+    [6650, 'F#', 0.5, 4],
+    [8150, 'A',  0.5, 5],
+  ];
+  for (const [cents, step, alter, octave] of cases) {
+    const sao = m.centsToStepAlterOctave(cents);
+    assertEqual(sao.step, step, `cents ${cents} expected step ${step}`);
+    assertEqual(sao.alter, alter, `cents ${cents} expected alter ${alter}`);
+    assertEqual(sao.octave, octave, `cents ${cents} expected octave ${octave}`);
+    // Round-trip
+    const back = m.stepAlterOctaveToCents(sao.step, sao.alter, sao.octave);
+    assertEqual(back, cents, `round-trip lost ${back - cents} cents`);
+  }
+});
+
+test('centsToStepAlterOctave: invalid inputs return null', () => {
+  assertEqual(m.centsToStepAlterOctave(null), null);
+  assertEqual(m.centsToStepAlterOctave(NaN), null);
+  assertEqual(m.centsToStepAlterOctave(-100), null);  // negative
+});
+
 console.log('------------');
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

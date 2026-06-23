@@ -98,6 +98,32 @@ function stepAlterOctaveToCents(step, alter, octave) {
   return (octave + 1) * 1200 + base + Math.round(a * 100);
 }
 
+// Inverse of stepAlterOctaveToCents — for synthesizing MusicXML from MIDI
+// notes so we can render sheet music for .mid files. Uses the 24-entry
+// QUARTER_TONE_NAMES table so quarter-tones round-trip exactly:
+//   6050  → ('C', 0.5, 4)
+//   6100  → ('C#', 0,   4)
+//   6150  → ('C#', 0.5, 4)
+// Eighth-tones (e.g. 6025) round to the nearest quarter-tone.
+function centsToStepAlterOctave(cents) {
+  if (cents == null || !isFinite(cents) || cents < 0) return null;
+  // octave = floor(cents / 1200) - 1, matching centsToPitch.
+  const octave = Math.floor(cents / 1200) - 1;
+  const withinOctave = cents - (octave + 1) * 1200;
+  const rounded = roundToNearest50(withinOctave);
+  const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
+  if (!match) return null;
+  // Decompose match.name → (step, alter). Names are 'C' / 'C↑' / 'C#' / 'C#↑'.
+  // For 'C':  step='C',  alter=0
+  // For 'C↑': step='C',  alter=0.5  (quarter-tone sharp of C, i.e. C half-sharp)
+  // For 'C#': step='C#', alter=0
+  // For 'C#↑': step='C#', alter=0.5
+  const isQuarter = match.name.endsWith('\u2191');
+  const step = isQuarter ? match.name.slice(0, -1) : match.name;
+  const alter = isQuarter ? 0.5 : 0;
+  return { step, alter, octave };
+}
+
 // Round to nearest 50 cents using banker's rounding (round-half-to-even).
   // JavaScript's Math.round rounds .5 toward +infinity (asymmetric) — e.g. 25¢
   // rounds UP to 50¢ ("C half-sharp"), but -25¢ rounds toward zero to 0¢
@@ -592,6 +618,7 @@ const api = {
   centsToPitch,
   pitchClass,
   stepAlterOctaveToCents,
+  centsToStepAlterOctave,
   readVarLen,
   parseMidi,
   notesFromEvents,

@@ -309,6 +309,55 @@ test('parseMusicXml: timing math across tempo change is correct', () => {
     `E4 off should be at 1.5s, got ${tickToSec(e4off.timeTicks)}`);
 });
 
+// ---------------------------------------------------------------------------
+// buildSyntheticMusicXml — used to render sheet music for .mid files
+// (which don't carry notation data).
+// ---------------------------------------------------------------------------
+test('buildSyntheticMusicXml: simple 4/4 sequence produces valid MusicXML', () => {
+  // C4 quarter at tick 0, E4 quarter at tick 480, G4 quarter at tick 960,
+  // C5 quarter at tick 1440, then a rest to fill the measure. 480 ticks/quarter.
+  const events = [
+    { timeTicks: 0,    type: 'on',  note: 6000, tempoBPM: 120 },
+    { timeTicks: 480,  type: 'off', note: 6000, tempoBPM: 120 },
+    { timeTicks: 480,  type: 'on',  note: 6400, tempoBPM: 120 },
+    { timeTicks: 960,  type: 'off', note: 6400, tempoBPM: 120 },
+    { timeTicks: 960,  type: 'on',  note: 6700, tempoBPM: 120 },
+    { timeTicks: 1440, type: 'off', note: 6700, tempoBPM: 120 },
+    { timeTicks: 1440, type: 'on',  note: 7200, tempoBPM: 120 },
+    { timeTicks: 1920, type: 'off', note: 7200, tempoBPM: 120 },
+  ];
+  const xmlText = xml.buildSyntheticMusicXml(events, 480);
+  // Must be valid MusicXML (re-parse it with the same parser).
+  const r = xml.parseMusicXml(xmlText);
+  assert(r.events.length === events.length,
+    `re-parsed should have ${events.length} events, got ${r.events.length}`);
+  // Pitches should be preserved through the cents → step/alter/octave
+  // → cents round-trip (within 50 cents = quarter-tone resolution).
+  const centsByIndex = [6000, 6400, 6700, 7200];
+  const noteEvents = r.events.filter(e => e.type === 'on');
+  for (let i = 0; i < centsByIndex.length; i++) {
+    assert(Math.abs(noteEvents[i].note - centsByIndex[i]) <= 50,
+      `note ${i}: expected ~${centsByIndex[i]} cents, got ${noteEvents[i].note}`);
+  }
+});
+
+test('buildSyntheticMusicXml: real demo MIDI produces parseable output', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const bytes = new Uint8Array(fs.readFileSync(path.join(__dirname, '..', 'examples', 'vp2-1all.mid')));
+  const r = M.analyzeMidi(bytes);
+  const xmlText = xml.buildSyntheticMusicXml(r.events, r.ticksPerQuarter);
+  // Re-parse to ensure round-trip validity.
+  const reparsed = xml.parseMusicXml(xmlText);
+  assert(reparsed.events.length > 0, 're-parsed should have events');
+  // vp2-1all.mid has 30 unique pitches spanning G#3 (cents 5600) to D6 (cents 8600).
+  // Both should appear in the re-parsed events after the cents → step/alter/
+  // octave → cents round-trip.
+  const inCents = new Set(reparsed.events.filter(e => e.type === 'on').map(e => e.note));
+  assert(inCents.has(5600), 'G#3 (5600¢) should appear');
+  assert(inCents.has(8600), 'D6 (8600¢) should appear');
+});
+
 console.log('-----------------');
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
