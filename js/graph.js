@@ -305,37 +305,38 @@
       // the bottom. text-anchor=middle and dominant-baseline=central
       // center the text on the node's (x, y) — no dx needed.
       // In chord mode the labels can be longer ("Cm7b5", "Dm7b5/Eb")
-      // so we use a smaller font and just show the chord name on a
-      // single line (frequency goes to the tooltip).
+      // so we use a smaller font. The user wanted the chord graph to
+      // look like the pitch graph — chord name on top, frequency %
+      // on a second line. The absolute count is in the tooltip.
       const labelSel = labelGroup.selectAll('text').data(nodes, d => d.id);
       labelSel.exit().remove();
       const labelEnter = labelSel.enter().append('text')
         .attr('class', isChord ? 'node-label chord-label' : 'node-label')
         .attr('text-anchor', 'middle')
         .attr('dominant-baseline', 'central')
-        .attr('dy', isChord ? '0em' : '-0.45em');
+        .attr('dy', isChord ? '-0.45em' : '-0.45em');
       // First tspan: pitch name or chord label. Sits on the upper half
-      // for pitch mode, centered for chord mode.
+      // for both modes (chord mode mirrors the pitch-graph layout —
+      // name on top, frequency % on the second line).
       labelEnter.append('tspan').attr('class', 'node-label-name');
       // Second tspan: frequency % on the line below the name. dy=0.9em
       // puts it just under the first line. No x attr — inherits the
       // text element's x position (which the tick handler sets to d.x).
-      // Skipped entirely in chord mode (label is one line only).
-      if (!isChord) {
-        labelEnter.append('tspan').attr('class', 'node-label-freq')
-          .attr('dy', '0.9em')
-          .attr('x', 0);  // reset the relative dx from the parent tspan
-      }
+      // Added in chord mode too so the chord graph mirrors the pitch
+      // graph visually — the user asked for "just the percentage, like
+      // the pitch transition glow" for the chord graph. The absolute
+      // count stays in the tooltip.
+      labelEnter.append('tspan').attr('class', 'node-label-freq')
+        .attr('dy', '0.9em')
+        .attr('x', 0);  // reset the relative dx from the parent tspan
       labelSel.merge(labelEnter).select('.node-label-name')
         .text(d => d.id);
-      if (!isChord) {
-        labelSel.merge(labelEnter).select('.node-label-freq')
-          .text(d => {
-            const pct = (d.frequency || 0) * 100;
-            // Two decimals for sub-1% pitches (vp2-1all.mid has many).
-            return `${pct < 1 ? pct.toFixed(2) : pct.toFixed(1)}%`;
-          });
-      }
+      labelSel.merge(labelEnter).select('.node-label-freq')
+        .text(d => {
+          const pct = (d.frequency || 0) * 100;
+          // Two decimals for sub-1% pitches (vp2-1all.mid has many).
+          return `${pct < 1 ? pct.toFixed(2) : pct.toFixed(1)}%`;
+        });
 
       // Edge hover: highlight the edge + swap to the white arrow marker.
       // (Labels are now always visible — was previously toggled via .visible

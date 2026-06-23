@@ -249,9 +249,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .node-label.chord-label {
   /* Chord labels are longer ("Cm7b5", "D# half-sharp raised 2nd") so
-     we use a smaller font and a single line. Frequency % moves to
-     the tooltip to save space. */
-  font-size: 7.5px;
+     we use a smaller font. Now shows 2 lines like the pitch graph:
+     chord name on top, frequency % on the second line. 7px is small
+     enough to fit both lines in the 36px-diameter circle. */
+  font-size: 7px;
   font-weight: 600;
   fill: #ffffff;
   stroke: rgba(0, 0, 0, 0.92);

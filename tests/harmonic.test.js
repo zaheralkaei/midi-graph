@@ -281,6 +281,29 @@ test('buildChordTransitionGraph: C → F → G → C → produces I-IV-V-I edges
   }
 });
 
+test('buildChordTransitionGraph: nodes carry count + frequency for the tooltip + 2-line label', () => {
+  // C major appears twice, F and G once each. Total chord appearances
+  // in the (deduped) sequence = 4 (C, F, G, C). The user wants:
+  //   - count: how many times this chord appears in the sequence
+  //   - frequency: count / totalChords (the percentage shown in the
+  //     chord node's 2-line label like the pitch graph)
+  // The tooltip reads "C — 2 chords (50.00% of progression)".
+  const windows = [
+    { startTick: 0,    endTick: 480,  pitches: [6000, 6400, 6700], label: 'C' },
+    { startTick: 480,  endTick: 960,  pitches: [6500, 6900, 7200], label: 'F' },
+    { startTick: 960,  endTick: 1440, pitches: [6700, 7100, 7400], label: 'G' },
+    { startTick: 1440, endTick: 1920, pitches: [6000, 6400, 6700], label: 'C' },
+  ];
+  const g = m.buildChordTransitionGraph(windows);
+  const byId = Object.fromEntries(g.nodes.map(n => [n.id, n]));
+  assertEqual(byId.C.count, 2, 'C appears twice');
+  assert(Math.abs(byId.C.frequency - 0.5) < 1e-9, `C frequency should be 0.5, got ${byId.C.frequency}`);
+  assertEqual(byId.F.count, 1, 'F appears once');
+  assert(Math.abs(byId.F.frequency - 0.25) < 1e-9, `F frequency should be 0.25, got ${byId.F.frequency}`);
+  assertEqual(byId.G.count, 1, 'G appears once');
+  assert(Math.abs(byId.G.frequency - 0.25) < 1e-9, `G frequency should be 0.25, got ${byId.G.frequency}`);
+});
+
 test('buildChordTransitionGraph: dedupes consecutive identical labels', () => {
   // 4 windows of C major back-to-back should produce ONE C label in the
   // sequence (and no self-loop), not 4.
