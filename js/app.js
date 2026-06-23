@@ -607,7 +607,14 @@
     stopBtn.disabled = false;
     playbackInfo.textContent = `Playing ${currentPlayback.noteCount} notes…`;
     // Phase 3: schedule chord-window glow alongside the note playback.
-    if (currentPlayback.tickToSec) scheduleChordGlow(currentPlayback.tickToSec);
+    if (currentPlayback.tickToSec) {
+      // Diagnostic: log how many chord windows we're scheduling so the
+      // user can see in DevTools if the data path is wired up.
+      const nw = currentResult && currentResult.chordWindows
+                 ? currentResult.chordWindows.length : 0;
+      console.log('[chord-glow] scheduling', nw, 'chord windows; currentHarmonicController?', !!currentHarmonicController);
+      scheduleChordGlow(currentPlayback.tickToSec);
+    }
     await currentPlayback.play();
     isPlaying = false;
     playBtn.disabled = false;
