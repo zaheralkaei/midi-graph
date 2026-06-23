@@ -22,9 +22,9 @@
 //       note_count, unique_note_count, unique_notes, transition_count,
 //       top_transitions, self_loop_count, self_loop_share, pitch_range.
 //
-//   centsToPitch(cents)                           → "C4" or "C# half-sharp 4"
+//   centsToPitch(cents)                           → "C4" or "C↑4" / "D#↑4"
 //   stepAlterOctaveToCents(step, alter, octave)   → number (e.g. C half-sharp, 4 → 6050)
-//   pitchClass(cents)                             → "C" / "C#" / "C half-sharp"
+//   pitchClass(cents)                             → "C" / "C#" / "C↑"
 //
 //   ticksToSeconds(timeTicks, tempoBPM, ticksPerQuarter)
 //       Convert a single tick time to seconds using the given tempo.
@@ -45,34 +45,37 @@ const SHARP_CENTS_FROM_C = {
 };
 
 // Display names for the 24 quarter-tones within an octave. We name every
-// half-tone as "[lower note] half-sharp" (sharp-going-up convention). The
-// alternative "half-flat" spelling is equivalent but harder to scan visually.
-// Names like "C half-sharp" are plain English per the project's house style.
+// half-tone as "[lower note]↑" (sharp-going-up convention). The compact "↑"
+// symbol (Unicode U+2191) is shorter than "half-sharp" and is unambiguous
+// in a quarter-tone context — quarter-tones in Arabic-music / Turkish-music
+// notation use ↑/↓ for raised/lower alterations respectively. The
+// alternative "half-flat" spelling is equivalent but harder to scan
+// visually; we don't emit it but the parser still accepts it as input.
 const QUARTER_TONE_NAMES = [
   { cents:    0, name: 'C' },
-  { cents:   50, name: 'C half-sharp' },
+  { cents:   50, name: 'C↑' },
   { cents:  100, name: 'C#' },
-  { cents:  150, name: 'C# half-sharp' },
+  { cents:  150, name: 'C#↑' },
   { cents:  200, name: 'D' },
-  { cents:  250, name: 'D half-sharp' },
+  { cents:  250, name: 'D↑' },
   { cents:  300, name: 'D#' },
-  { cents:  350, name: 'D# half-sharp' },
+  { cents:  350, name: 'D#↑' },
   { cents:  400, name: 'E' },
-  { cents:  450, name: 'E half-sharp' },
+  { cents:  450, name: 'E↑' },
   { cents:  500, name: 'F' },
-  { cents:  550, name: 'F half-sharp' },
+  { cents:  550, name: 'F↑' },
   { cents:  600, name: 'F#' },
-  { cents:  650, name: 'F# half-sharp' },
+  { cents:  650, name: 'F#↑' },
   { cents:  700, name: 'G' },
-  { cents:  750, name: 'G half-sharp' },
+  { cents:  750, name: 'G↑' },
   { cents:  800, name: 'G#' },
-  { cents:  850, name: 'G# half-sharp' },
+  { cents:  850, name: 'G#↑' },
   { cents:  900, name: 'A' },
-  { cents:  950, name: 'A half-sharp' },
+  { cents:  950, name: 'A↑' },
   { cents: 1000, name: 'A#' },
-  { cents: 1050, name: 'A# half-sharp' },
+  { cents: 1050, name: 'A#↑' },
   { cents: 1100, name: 'B' },
-  { cents: 1150, name: 'B half-sharp' },
+  { cents: 1150, name: 'B↑' },
 ];
 
 // step+alter+octave → cents above C0. alter is in semitones (0, 0.5, 1, 1.5, ...).
@@ -118,7 +121,7 @@ function stepAlterOctaveToCents(step, alter, octave) {
     return Math.round(divided) * 50;
   }
 
-  // cents → display name like "C4" or "C# half-sharp 4".
+  // cents → display name like "C4" or "C↑4" / "D#↑4".
   function centsToPitch(cents) {
     if (cents == null || !isFinite(cents)) return '?';
     if (cents < 0) return '?';  // negative cents are unreachable through any
@@ -129,11 +132,9 @@ function stepAlterOctaveToCents(step, alter, octave) {
     const rounded = roundToNearest50(withinOctave);
     const match = QUARTER_TONE_NAMES.find(t => t.cents === rounded);
     if (match) {
-      // Insert a space between name and octave when the name itself contains
-      // a space (e.g. "C half-sharp" + 4 → "C half-sharp 4"). Plain names
-      // ("C", "C#") stay concatenated as before ("C4", "C#4").
-      const sep = match.name.includes(' ') ? ' ' : '';
-      return match.name + sep + octave;
+      // Plain names ("C", "C#") concatenate with octave → "C4", "C#4".
+      // Arrow names ("C↑", "D#↑") concatenate too → "C↑4", "D#↑4".
+      return match.name + octave;
     }
     return `?${cents}`;
   }

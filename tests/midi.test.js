@@ -100,17 +100,19 @@ test('centsToPitch: sharp spelling for chromatic classes', () => {
 // ---------------------------------------------------------------------------
 // centsToPitch: quarter-tones — exactly preserved as named pitches
 // ---------------------------------------------------------------------------
+// Quarter-tone cents ↔ display name with the short "↑" form.
+// (e.g. centsToPitch(6050) → "C↑4", pitchClass(6050) → "C↑")
 test('centsToPitch: C half-sharp (cents 6050) is named, not rounded', () => {
-  assertEqual(m.centsToPitch(6050), 'C half-sharp 4');
+  assertEqual(m.centsToPitch(6050), 'C↑4');
 });
 test('centsToPitch: F# half-sharp (cents 6650)', () => {
-  assertEqual(m.centsToPitch(6650), 'F# half-sharp 4');
+  assertEqual(m.centsToPitch(6650), 'F#↑4');
 });
 test('centsToPitch: B half-sharp (cents 7150)', () => {
-  assertEqual(m.centsToPitch(7150), 'B half-sharp 4');
+  assertEqual(m.centsToPitch(7150), 'B↑4');
 });
 test('centsToPitch: C half-sharp stays distinct from C# at octave boundary', () => {
-  assertEqual(m.centsToPitch(6050), 'C half-sharp 4');
+  assertEqual(m.centsToPitch(6050), 'C↑4');
   assertEqual(m.centsToPitch(6100), 'C#4');
   assertNotEqual(m.centsToPitch(6050), m.centsToPitch(6100));
 });
@@ -158,8 +160,11 @@ test('pitchOf contract: returns exact cents for half-sharps', () => {
   const halfSharps = [50, 150, 250, 350, 450, 550, 650, 750, 850, 950, 1050, 1150];
   for (const c of halfSharps) {
     const name = m.centsToPitch(c);
-    assert(name.includes('half-sharp'),
-      `cents ${c} should produce a name containing "half-sharp", got "${name}"`);
+    // Names now use the ↑ symbol (e.g. "C↑0"), not the long "half-sharp"
+    // form. The contract we're testing is "name contains a quarter-tone
+    // marker", which we satisfy with either short or long form.
+    assert(name.includes('\u2191') || name.includes('half-sharp'),
+      `cents ${c} should produce a name with a quarter-tone marker, got "${name}"`);
   }
 });
 
@@ -200,8 +205,31 @@ test('pitchOf cents formula: all 12 naturals + sharps, multiple octaves', () => 
   }
 });
 
-test('pitchOf cents formula: quarter-tone support', () => {
-  // Same formula but with 50-cent offset for half-sharps.
+test('pitchOf cents formula: quarter-tone support (short ↑ form, current emit)', () => {
+  // Short form: "C↑4" = (4+1)*1200 + 0*100 + 50 = 6050. This is what
+  // centsToPitch emits today. pitchOf in graph.js must accept it.
+  const SHARP_SCALE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const cases = [
+    ['C↑4', 6050],
+    ['C#↑4', 6150],
+    ['D↑4', 6250],
+    ['F#↑4', 6650],
+    ['A↑5', 8150],
+    ['B↑4', 7150],
+  ];
+  for (const [name, expectedCents] of cases) {
+    const m1 = name.match(/^([A-G][#]?)(\u2191| (?:half-(?:sharp|flat)) )?(-?\d+)$/);
+    assert(m1, `regex should match "${name}"`);
+    const pc = SHARP_SCALE_NAMES.indexOf(m1[1]);
+    const oct = parseInt(m1[3], 10);
+    const cents = (oct + 1) * 1200 + pc * 100 + (m1[2] ? 50 : 0);
+    assertEqual(cents, expectedCents,
+      `pitchOf("${name}") should yield ${expectedCents}`);
+  }
+});
+test('pitchOf cents formula: quarter-tone support (long "half-sharp" form, legacy compat)', () => {
+  // Long form: "C half-sharp 4" = same cents. Kept for backward-compat
+  // with anything that cached the old display name.
   const SHARP_SCALE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
   const cases = [
     ['C half-sharp 4', 6050],
@@ -210,9 +238,10 @@ test('pitchOf cents formula: quarter-tone support', () => {
     ['F# half-sharp 4', 6650],
     ['A half-sharp 5', 8150],
     ['B half-sharp 4', 7150],
+    ['B half-flat 4', 7150],   // half-flat = same cents as the half-sharp below
   ];
   for (const [name, expectedCents] of cases) {
-    const m1 = name.match(/^([A-G][#]?)(?: (half-(?:sharp|flat)) )?(-?\d+)$/);
+    const m1 = name.match(/^([A-G][#]?)(\u2191| (?:half-(?:sharp|flat)) )?(-?\d+)$/);
     assert(m1, `regex should match "${name}"`);
     const pc = SHARP_SCALE_NAMES.indexOf(m1[1]);
     const oct = parseInt(m1[3], 10);
@@ -425,8 +454,8 @@ test('pitchClass: octave stripped, exact quarter-tones preserved', () => {
   assertEqual(m.pitchClass(6000), 'C');
   assertEqual(m.pitchClass(7200), 'C');
   assertEqual(m.pitchClass(6600), 'F#');
-  assertEqual(m.pitchClass(6050), 'C half-sharp');
-  assertEqual(m.pitchClass(6650), 'F# half-sharp');
+  assertEqual(m.pitchClass(6050), 'C↑');
+  assertEqual(m.pitchClass(6650), 'F#↑');
 });
 
 // ---------------------------------------------------------------------------
@@ -543,10 +572,10 @@ test('buildTransitionGraph: repeated C4 → C4 self-loop is probability 0.5', ()
 });
 
 test('buildTransitionGraph: quarter-tone (6050) stays distinct from C# (6100)', () => {
-  // C4 (6000), C half-sharp 4 (6050), C#4 (6100) — all three are different nodes.
+  // C4 (6000), C↑4 (6050), C#4 (6100) — all three are different nodes.
   const g = m.buildTransitionGraph([6000, 6050, 6100]);
   const ids = g.nodes.map(n => n.id).sort();
-  assertEqual(ids, ['C half-sharp 4', 'C#4', 'C4']);
+  assertEqual(ids, ['C#4', 'C4', 'C↑4']);
   // Three transitions, none collapsed.
   assertEqual(g.links.length, 2);
 });
@@ -574,11 +603,11 @@ test('computeStats: pitch range across full MIDI span', () => {
 });
 
 test('computeStats: pitch range shows fractional semitones for quarter-tones', () => {
-  // C4 (6000) and C half-sharp 4 (6050) → range = 0.5 semitones
+  // C4 (6000) and C↑4 (6050) → range = 0.5 semitones
   const notes = [6000, 6050];
   const g = m.buildTransitionGraph(notes);
   const stats = m.computeStats(notes, g);
-  assertEqual(stats.pitch_range, 'C4 – C half-sharp 4 (0.5 semitones)');
+  assertEqual(stats.pitch_range, 'C4 – C↑4 (0.5 semitones)');
 });
 
 test('computeStats: self-loop share of 100% if every transition is a self-loop', () => {

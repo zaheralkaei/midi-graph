@@ -23,7 +23,9 @@
     // so they sit visually between their sharp neighbor and the next natural.
     const colors = {};
     PITCH_CLASSES.forEach((name, i) => {
-      const isHalfSharp = name.includes('half-sharp');
+      // Quarter-tone classes (now using the ↑ symbol) get lower saturation
+      // and higher lightness so they read as "between" their sharp neighbors.
+      const isHalfSharp = name.includes('half-sharp') || name.includes('\u2191');
       const hue = i * 15;  // 0, 15, 30, ..., 345
       const sat = isHalfSharp ? 55 : 80;
       const light = isHalfSharp ? 70 : 55;
@@ -40,33 +42,34 @@
   // sliders).
   const SHARP_SCALE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-  // Parse a pitch-id like "F#5" or "C half-sharp 5" back to cents above C0.
-  // Supports "half-sharp" (alter=+0.5) and "half-flat" (alter=-0.5) notations.
-  // Both spellings are accepted even though QUARTER_TONE_NAMES currently only
-  // emits "half-sharp" — keeps the regex forward-compatible if the naming
-  // convention ever flips to flat-going-down.
+  // Parse a pitch-id like "F#5", "C half-sharp 5", or "C↑5" back to cents
+  // above C0. Supports three notations:
+  //   - "C4"             — natural/sharp (cents = oct*1200 + pc*100)
+  //   - "C half-sharp 4" — long-form quarter-tone (legacy, kept for compat)
+  //   - "C half-flat 4"  — long-form quarter-tone (legacy, kept for compat)
+  //   - "C↑4"            — short-form quarter-tone (current emit format)
   //
   // Regex anatomy:
-  //   ^([A-G][#]?)         - the letter + optional sharp
-  //   (?: (half-(?:sharp|flat)) )?  - optional " half-sharp" or " half-flat"
-  //                                (trailing space INSIDE the group, since
-  //                                centsToPitch emits "C half-sharp 4" with
-  //                                spaces between every token)
-  //   (-?\d+)$             - the octave number (negative octaves for sub-audio)
+  //   ^([A-G][#]?)                  - letter + optional sharp
+  //   (?: \u2191 )?                  - optional up-arrow (current short form)
+  //   OR (?: (half-(?:sharp|flat)) )?  - optional " half-sharp" / " half-flat"
+  //                                  (legacy form, trailing space INSIDE the
+  //                                  group, since centsToPitch emitted
+  //                                  "C half-sharp 4" before the rename)
+  //   (-?\d+)$                      - octave number (negative for sub-audio)
   function pitchOf(id) {
     if (id == null) return 6000;
-    const m = id.match(/^([A-G][#]?)(?: (half-(?:sharp|flat)) )?(-?\d+)$/);
+    // Match either the short form (C↑4) or the legacy long form
+    // (C half-sharp 4 / C half-flat 4). Both alternatives are wrapped in
+    // non-capturing groups so the octave capture (m[2]) is consistent
+    // regardless of which form matched.
+    const m = id.match(/^([A-G][#]?)(?:\u2191| (?:half-(?:sharp|flat)) )?(-?\d+)$/);
     if (!m) return 6000;
     const pc = SHARP_SCALE_NAMES.indexOf(m[1]);
     if (pc < 0) return 6000;
-    const octave = parseInt(m[3], 10);
-    // half-flat of step X = 50 cents BELOW the natural of step X, which is
-    // the same as half-sharp of the step one position lower (PC-wise). But
-    // QUARTER_TONE_NAMES only includes half-sharps, so if a file ever emitted
-    // "B half-flat 4" we'd map it to 7000-50 = 6950 (which doesn't match any
-    // named quarter-tone and would round to "A4"). That's a degenerate case
-    // — we just don't currently produce those names.
-    const centsInOctave = pc * 100 + (m[2] ? 50 : 0);
+    const octave = parseInt(m[2], 10);
+    const isQuarter = m[1] && (id.indexOf('\u2191') >= 0 || /half-/.test(id));
+    const centsInOctave = pc * 100 + (isQuarter ? 50 : 0);
     return (octave + 1) * 1200 + centsInOctave;
   }
 
@@ -185,12 +188,23 @@
       // ----- Nodes -----
       const nodeSel = nodeGroup.selectAll('circle').data(nodes, d => d.id);
       nodeSel.exit().remove();
+      // Drag mode depends on the "Pin dragged nodes" checkbox. Default is
+      // REARRANGE (checkbox unchecked): dragged nodes snap back when released
+      // (fx/fy cleared, force simulation continues). When the box is checked
+      // (PIN mode): fx/fy are left set, the dragged node stays put and the
+      // simulation continues to re-settle everything else around it.
       const nodeEnter = nodeSel.enter().append('circle').attr('r', 18);
       const nodeAll = nodeEnter.merge(nodeSel)
         .call(d3.drag()
-          .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+          .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = e.x; d.fy = e.y; })
           .on('drag',  (e, d) => { d.fx = e.x; d.fy = e.y; })
-          .on('end',   (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
+          .on('end',   (e, d) => {
+            if (!e.active) simulation.alphaTarget(0);
+            const pin = document.getElementById('drag-pin-mode').checked;
+            if (!pin) { d.fx = null; d.fy = null; }
+            // In PIN mode, leave d.fx/d.fy set so the node stays where the
+            // user dropped it. The simulation still settles other nodes around it.
+          }));
 
       const colorByClass = document.getElementById('color-by-pitch-class').checked;
       nodeAll
