@@ -33,6 +33,34 @@ h1 .title-tag {
   color: var(--muted);
   letter-spacing: 0.2px;
 }
+.source-label {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 8px;
+}
+.track-picker-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.track-picker-row select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.track-picker-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
 .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
 
 .panel {

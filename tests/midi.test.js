@@ -34,36 +34,48 @@ function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed
 
 // MIDI builder — accepts MIDI note bytes (0-127). The parser converts to cents.
 function buildMidi(events, { ppq = 480, bpm = 120 } = {}) {
-  const evList = [{ type: 'tempo', tick: 0, bpm }].concat(events);
-  evList.sort((a, b) => a.tick - b.tick);
-  const track = [];
-  let lastTick = 0;
-  for (const ev of evList) {
-    const delta = ev.tick - lastTick;
-    lastTick = ev.tick;
-    track.push(...vlq(delta));
-    if (ev.type === 'tempo') {
-      const mics = Math.round(60_000_000 / ev.bpm);
-      track.push(0xff, 0x51, 0x03, (mics >> 16) & 0xff, (mics >> 8) & 0xff, mics & 0xff);
-    } else if (ev.type === 'on') {
-      track.push(0x90, ev.note & 0x7f, ev.vel & 0x7f);
-    } else if (ev.type === 'off') {
-      track.push(0x80, ev.note & 0x7f, 0x40);
+  return buildMultiTrackMidi([events], { ppq, bpm });
+}
+function buildMultiTrackMidi(tracks, { ppq = 480, bpm = 120 } = {}) {
+  // Wrap each track in a complete MTrk chunk (tempo at start, end-of-track
+  // meta at end). Used by the Phase 1 per-track-analysis tests.
+  const trackChunks = tracks.map(events => {
+    const evList = [{ type: 'tempo', tick: 0, bpm }].concat(events);
+    evList.sort((a, b) => a.tick - b.tick);
+    const track = [];
+    let lastTick = 0;
+    for (const ev of evList) {
+      const delta = ev.tick - lastTick;
+      lastTick = ev.tick;
+      track.push(...vlq(delta));
+      if (ev.type === 'tempo') {
+        const mics = Math.round(60_000_000 / ev.bpm);
+        track.push(0xff, 0x51, 0x03, (mics >> 16) & 0xff, (mics >> 8) & 0xff, mics & 0xff);
+      } else if (ev.type === 'on') {
+        // Status byte encodes channel in the low 4 bits. Default channel 0.
+        const channel = ev.channel || 0;
+        track.push(0x90 | (channel & 0x0f), ev.note & 0x7f, ev.vel & 0x7f);
+      } else if (ev.type === 'off') {
+        const channel = ev.channel || 0;
+        track.push(0x80 | (channel & 0x0f), ev.note & 0x7f, 0x40);
+      }
     }
-  }
-  track.push(0x00, 0xff, 0x2f, 0x00);
-  const trackData = Buffer.from(track);
+    track.push(0x00, 0xff, 0x2f, 0x00);
+    const trackData = Buffer.from(track);
+    const trackHeader = Buffer.from([
+      0x4d, 0x54, 0x72, 0x6b,
+      (trackData.length >> 24) & 0xff, (trackData.length >> 16) & 0xff,
+      (trackData.length >> 8) & 0xff, trackData.length & 0xff,
+    ]);
+    return Buffer.concat([trackHeader, trackData]);
+  });
+  const numTracks = tracks.length;
   const header = Buffer.from([
     0x4d, 0x54, 0x68, 0x64, 0x00, 0x00, 0x00, 0x06,
-    0x00, 0x00, 0x00, 0x01,
+    0x00, 0x01, (numTracks >> 8) & 0xff, numTracks & 0xff,
     (ppq >> 8) & 0xff, ppq & 0xff,
   ]);
-  const trackHeader = Buffer.from([
-    0x4d, 0x54, 0x72, 0x6b,
-    (trackData.length >> 24) & 0xff, (trackData.length >> 16) & 0xff,
-    (trackData.length >> 8) & 0xff, trackData.length & 0xff,
-  ]);
-  return new Uint8Array(Buffer.concat([header, trackHeader, trackData]));
+  return new Uint8Array(Buffer.concat([header, ...trackChunks]));
 }
 function vlq(n) {
   if (n === 0) return [0];
@@ -779,6 +791,132 @@ test('centsToStepAlterOctave: invalid inputs return null', () => {
   assertEqual(m.centsToStepAlterOctave(null), null);
   assertEqual(m.centsToStepAlterOctave(NaN), null);
   assertEqual(m.centsToStepAlterOctave(-100), null);  // negative
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1: per-track analysis (track picker for multi-track MIDI)
+// ---------------------------------------------------------------------------
+test('analyzeMidi: multi-track file returns one trackAnalyses entry per non-empty track', () => {
+  // 3 tracks: violin 1 (channel 0), violin 2 (channel 1), silent meta-only
+  const track1 = [
+    { type: 'on', tick: 0,    note: 60, vel: 80, channel: 0 },
+    { type: 'off', tick: 480, note: 60, vel: 0,  channel: 0 },
+    { type: 'on', tick: 480,  note: 62, vel: 80, channel: 0 },
+    { type: 'off', tick: 960, note: 62, vel: 0,  channel: 0 },
+  ];
+  const track2 = [
+    { type: 'on', tick: 240,  note: 55, vel: 70, channel: 1 },
+    { type: 'off', tick: 720, note: 55, vel: 0,  channel: 1 },
+  ];
+  const track3Silent = [];   // meta-only / no notes
+  const bytes = buildMultiTrackMidi([track1, track2, track3Silent]);
+  const r = m.analyzeMidi(bytes);
+  assertEqual(r.trackAnalyses.length, 2, 'expected 2 non-empty track entries');
+  assertEqual(r.trackAnalyses[0].trackIndex, 0, 'first entry is track 0');
+  assertEqual(r.trackAnalyses[0].userLabel, 'Track 1', '1-indexed user label');
+  assertEqual(r.trackAnalyses[0].noteCount, 2, 'track 0 has 2 notes');
+  assertEqual(r.trackAnalyses[1].trackIndex, 1, 'second entry is track 1');
+  assertEqual(r.trackAnalyses[1].noteCount, 1, 'track 1 has 1 note');
+});
+
+test('analyzeMidi: trackAnalyses entries contain independent graphs', () => {
+  // Two tracks with completely different content; their graphs must
+  // not share state (no global accumulator bug).
+  const t1 = [
+    { type: 'on', tick: 0,    note: 60, vel: 80, channel: 0 },
+    { type: 'off', tick: 480, note: 60, vel: 0,  channel: 0 },
+    { type: 'on', tick: 480,  note: 62, vel: 80, channel: 0 },
+    { type: 'off', tick: 960, note: 62, vel: 0,  channel: 0 },
+    { type: 'on', tick: 960,  note: 64, vel: 80, channel: 0 },
+    { type: 'off', tick: 1440,note: 64, vel: 0,  channel: 0 },
+  ];
+  const t2 = [
+    { type: 'on', tick: 0,    note: 48, vel: 80, channel: 1 },
+    { type: 'off', tick: 480, note: 48, vel: 0,  channel: 1 },
+  ];
+  const r2 = m.analyzeMidi(buildMultiTrackMidi([t1, t2]));
+  // Track 0 graph should have C, D, E as nodes (3 unique pitches).
+  assertEqual(r2.trackAnalyses[0].graph.nodes.length, 3, 'track 0 has 3 unique pitches');
+  // Track 1 graph should have only C3 (1 unique pitch).
+  assertEqual(r2.trackAnalyses[1].graph.nodes.length, 1, 'track 1 has 1 unique pitch');
+  // The merged (top-level) graph has all 4 pitches.
+  assertEqual(r2.graph.nodes.length, 4, 'merged graph has 4 unique pitches');
+});
+
+test('pickMelodicTrack: returns highest-scoring non-percussion track', () => {
+  // Track 0: short percussion pattern (channel 9).
+  // Track 1: monophonic melody, 20 notes in C4-C5 range.
+  // Track 2: bass line, 12 notes in C2-C3 range (lower voice).
+  // Expect: track 1 wins (highest note count × pitch range).
+  const drumEv = [];
+  for (let i = 0; i < 20; i++) {
+    drumEv.push({ type: 'on',  tick: i * 60, note: 36, vel: 100, channel: 9 });
+    drumEv.push({ type: 'off', tick: i * 60 + 30, note: 36, vel: 0, channel: 9 });
+  }
+  const melodyEv = [];
+  for (let i = 0; i < 20; i++) {
+    const note = 60 + (i % 12);
+    melodyEv.push({ type: 'on',  tick: i * 480, note, vel: 80, channel: 0 });
+    melodyEv.push({ type: 'off', tick: i * 480 + 470, note, vel: 0, channel: 0 });
+  }
+  const bassEv = [];
+  for (let i = 0; i < 12; i++) {
+    const note = 36 + (i % 4);
+    bassEv.push({ type: 'on',  tick: i * 960, note, vel: 70, channel: 1 });
+    bassEv.push({ type: 'off', tick: i * 960 + 950, note, vel: 0, channel: 1 });
+  }
+  const r = m.analyzeMidi(buildMultiTrackMidi([drumEv, melodyEv, bassEv]));
+  assertEqual(r.trackAnalyses.length, 3, 'all three tracks analyzed');
+  assertEqual(r.trackAnalyses[0].isPercussion, true, 'track 0 is percussion');
+  assertEqual(r.autoMelodic, 1, 'auto-pick returns track 1 (melody)');
+});
+
+test('pickMelodicTrack: rejects channel-9 (drums) tracks', () => {
+  const drumEv = [];
+  for (let i = 0; i < 100; i++) {
+    drumEv.push({ type: 'on',  tick: i * 60, note: 36, vel: 100, channel: 9 });
+    drumEv.push({ type: 'off', tick: i * 60 + 30, note: 36, vel: 0, channel: 9 });
+  }
+  const r = m.analyzeMidi(buildMultiTrackMidi([drumEv]));
+  // Single percussion track — autoMelodic falls back to it
+  // (no other candidates), but trackAnalyses still has the entry.
+  assertEqual(r.trackAnalyses.length, 1, 'one track');
+  assertEqual(r.trackAnalyses[0].isPercussion, true, 'isPercussion flag set');
+});
+
+test('pickMelodicTrack: rejects very-low-note-count tracks', () => {
+  // 3 tracks, 2 with <8 notes (should be excluded from candidates).
+  const sparse1 = [
+    { type: 'on',  tick: 0, note: 60, vel: 80, channel: 0 },
+    { type: 'off', tick: 480, note: 60, vel: 0, channel: 0 },
+  ];
+  const sparse2 = [
+    { type: 'on',  tick: 0, note: 62, vel: 80, channel: 1 },
+    { type: 'off', tick: 480, note: 62, vel: 0, channel: 1 },
+  ];
+  const dense = [];
+  for (let i = 0; i < 20; i++) {
+    dense.push({ type: 'on',  tick: i * 240, note: 60 + i % 12, vel: 80, channel: 2 });
+    dense.push({ type: 'off', tick: i * 240 + 230, note: 60 + i % 12, vel: 0, channel: 2 });
+  }
+  const r = m.analyzeMidi(buildMultiTrackMidi([sparse1, sparse2, dense]));
+  // Both sparse tracks have noteCount=1 (<8 threshold), only dense track
+  // is a candidate.
+  assertEqual(r.autoMelodic, 2, 'auto-pick returns track 2 (the dense one)');
+});
+
+test('analyzeMidi: single-track file returns one trackAnalyses entry', () => {
+  // Bach Allemande-style single-track file.
+  const ev = [
+    { type: 'on',  tick: 0,    note: 60, vel: 80, channel: 0 },
+    { type: 'off', tick: 480,  note: 60, vel: 0,  channel: 0 },
+    { type: 'on',  tick: 480,  note: 62, vel: 80, channel: 0 },
+    { type: 'off', tick: 960,  note: 62, vel: 0,  channel: 0 },
+  ];
+  const r = m.analyzeMidi(buildMidi(ev));
+  assertEqual(r.trackAnalyses.length, 1, 'one track entry');
+  assertEqual(r.trackAnalyses[0].trackIndex, 0, 'track 0');
+  assertEqual(r.trackAnalyses[0].noteCount, 2, '2 notes');
 });
 
 console.log('------------');

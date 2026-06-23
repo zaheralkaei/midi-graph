@@ -52,6 +52,16 @@
 
   let currentGraphController = null;
   let currentPlayback = null;
+  let currentResult = null;        // Phase 1: keep the analyze result so we
+                                   // can re-render the graph when the user
+                                   // picks a different track.
+  let currentMelodicIndex = 0;     // INDEX into trackAnalyses (NOT a
+                                   // trackIndex — they're different because
+                                   // some MIDI files have silent/meta-only
+                                   // tracks at the start that get filtered
+                                   // out). The select value is the
+                                   // trackIndex; the array lookup uses the
+                                   // array position.
   let isPlaying = false;
 
   function resetState() {
@@ -198,15 +208,20 @@
   }
 
   function finishLoad(result) {
-    renderStats(result.stats);
-
-    const graphContainer = document.getElementById('graph');
-    currentGraphController = M.render(graphContainer, result.graph);
+    // Phase 1: cache the full analyze result so the track picker can
+    // re-render the graph without re-parsing the file.
+    currentResult = result;
+    currentMelodicIndex = 0;   // default to first track
+    populateTrackPicker(result);
+    renderMelodicView();
     graphPanel.classList.remove('hidden');
 
     // Wire playback callbacks so the graph glows when each pitch is sounding.
     // Guard against the controller being null in case the graph was torn down
     // (e.g. during resetState) before the callback fires.
+    // Playback always uses the merged events so the user hears the whole
+    // piece — switching tracks in the picker only changes what the graph
+    // shows, not what gets played.
     currentPlayback = M.buildPlayback(result.events, result.ticksPerQuarter, {
       onNoteOn: (cents) => currentGraphController && currentGraphController.setActive(cents, true),
       onNoteOff: (cents) => currentGraphController && currentGraphController.setActive(cents, false),
@@ -214,6 +229,104 @@
     playBtn.disabled = false;
     stopBtn.disabled = true;
     playbackInfo.textContent = `${currentPlayback.noteCount} notes ready. Click Play to start.`;
+  }
+
+  // Phase 1: populate the track-picker <select> with one option per
+  // non-empty track. For single-track files (or files that don't have
+  // per-track data, e.g. MusicXML) the picker is hidden — no point in
+  // giving the user a one-option dropdown. For multi-track MIDI files
+  // the picker is shown, with a hint about the auto-pick.
+  function populateTrackPicker(result) {
+    const select = document.getElementById('track-picker');
+    const row = document.getElementById('track-picker-row');
+    const hint = document.getElementById('track-picker-hint');
+    if (!select || !row) return;     // safety: HTML missing
+    const tracks = (result && result.trackAnalyses) || [];
+    if (tracks.length <= 1) {
+      row.classList.add('hidden');
+      select.innerHTML = '';
+      hint.textContent = '';
+      return;
+    }
+    row.classList.remove('hidden');
+    select.innerHTML = '';
+    tracks.forEach((t, i) => {
+      const opt = document.createElement('option');
+      opt.value = String(i);             // array index, not trackIndex
+      opt.textContent = `${t.userLabel} — ${t.noteCount} notes · ${formatRange(t.pitchRange)}${t.isPercussion ? ' · drums' : ''}`;
+      select.appendChild(opt);
+    });
+    // Add the "Auto (pick lead)" option at the end.
+    const autoOpt = document.createElement('option');
+    autoOpt.value = 'auto';
+    autoOpt.textContent = `Auto (pick lead) — Track ${(result.autoMelodic || 0) + 1}`;
+    select.appendChild(autoOpt);
+    // Default = first track in trackAnalyses (always array index 0).
+    select.value = '0';
+    currentMelodicIndex = 0;
+    // Show the auto-pick suggestion as a small hint next to the dropdown.
+    if (result.autoMelodic != null && result.autoMelodic !== 0) {
+      hint.textContent = `(auto-pick suggests Track ${result.autoMelodic + 1})`;
+    } else {
+      hint.textContent = '';
+    }
+    // Wire change handler (only once — but we re-wire each time, the
+    // old listener is harmless because we replace innerHTML above and
+    // re-set the value, so the change event only fires on real user
+    // interaction).
+    select.onchange = () => {
+      const v = select.value;
+      if (v === 'auto') {
+        // Map result.autoMelodic (a trackIndex) to its array index.
+        const idx = tracks.findIndex(t => t.trackIndex === result.autoMelodic);
+        currentMelodicIndex = idx >= 0 ? idx : 0;
+      } else {
+        currentMelodicIndex = parseInt(v, 10);
+      }
+      renderMelodicView();
+    };
+  }
+
+  function formatRange([lo, hi]) {
+    return `${centsToPitchString(lo)}–${centsToPitchString(hi)}`;
+  }
+  function centsToPitchString(cents) {
+    return M.centsToPitch(cents);
+  }
+
+  // Phase 1: re-render the graph + stats + source label using the
+  // currently-selected track's analysis. Destroys the previous graph
+  // controller first so we don't leak D3 listeners or stale SVG nodes.
+  // Falls back to the top-level (merged) graph for files that don't
+  // have per-track data (MusicXML, MXL, or any future analyze*()).
+  function renderMelodicView() {
+    if (!currentResult) return;
+    if (currentGraphController) {
+      currentGraphController.destroy();
+      currentGraphController = null;
+    }
+    const trackAnalyses = currentResult.trackAnalyses || [];
+    const sourceLabel = document.getElementById('graph-source-label');
+    let graph, stats, labelText;
+    if (trackAnalyses.length > 0 &&
+        currentMelodicIndex >= 0 &&
+        currentMelodicIndex < trackAnalyses.length) {
+      const track = trackAnalyses[currentMelodicIndex];
+      graph = track.graph;
+      stats = track.stats;
+      labelText = track.isPercussion
+        ? `· source: ${track.userLabel} (drums, ${track.noteCount} notes)`
+        : `· source: ${track.userLabel} (${track.noteCount} notes)`;
+    } else {
+      // No per-track data (e.g. MusicXML) — use the merged graph.
+      graph = currentResult.graph;
+      stats = currentResult.stats;
+      labelText = '';
+    }
+    sourceLabel.textContent = labelText;
+    const graphContainer = document.getElementById('graph');
+    currentGraphController = M.render(graphContainer, graph);
+    renderStats(stats);
   }
 
   // Detect file type by inspecting the actual content (not the extension).

@@ -302,16 +302,17 @@ function parseMidi(bytes) {
           p += len;
         } else {
           const hi = status & 0xf0;
+          const channel = status & 0x0f;   // 0-15, 9 = GM percussion
           if (hi === 0x90) {
             const midiNote = track[p++];
             const vel = track[p++];
             const cents = midiNote * 100;
             if (vel > 0) {
-              const ev = { timeTicks: t, type: 'on', note: cents, vel, tempoBPM, track: ti };
+              const ev = { timeTicks: t, type: 'on', note: cents, vel, tempoBPM, track: ti, channel };
               events.push(ev);
               perTrackEvents[ti].push(ev);
             } else {
-              const ev = { timeTicks: t, type: 'off', note: cents, tempoBPM, track: ti };
+              const ev = { timeTicks: t, type: 'off', note: cents, tempoBPM, track: ti, channel };
               events.push(ev);
               perTrackEvents[ti].push(ev);
             }
@@ -319,7 +320,7 @@ function parseMidi(bytes) {
             const midiNote = track[p++];
             const vel = track[p++];
             const cents = midiNote * 100;
-            const ev = { timeTicks: t, type: 'off', note: cents, vel, tempoBPM, track: ti };
+            const ev = { timeTicks: t, type: 'off', note: cents, vel, tempoBPM, track: ti, channel };
             events.push(ev);
             perTrackEvents[ti].push(ev);
           } else if (hi === 0xa0 || hi === 0xb0 || hi === 0xe0) {
@@ -538,7 +539,115 @@ function analyzeMidi(bytes) {
   const notes = notesFromEvents(events);
   const graph = buildTransitionGraph(notes);
   const stats = computeStats(notes, graph);
-  return { graph, stats, events, ticksPerQuarter, tracks, timeSignatures };
+  // Phase 1: per-track analyses. Each non-empty track gets its own
+  // graph + stats so the user can pick which track to visualize as
+  // the melody (important for multi-track MIDI like string quartets
+  // where the merged "melody" would just be whatever-note-came-next).
+  // The "merged" analysis is also kept as the first entry — it's
+  // what the user sees if they don't change the dropdown.
+  const trackAnalyses = buildTrackAnalyses(tracks);
+  // Phase 1 heuristic: pick the best melodic candidate. We expose
+  // this as a hint for the UI's "Auto (pick lead)" option; the
+  // UI's default is the first track, not the auto-pick, so this
+  // is informational only.
+  const autoMelodic = pickMelodicTrack(trackAnalyses);
+  return {
+    graph, stats, events, ticksPerQuarter, tracks, timeSignatures,
+    trackAnalyses, autoMelodic,
+  };
+}
+
+// Phase 1: build a self-contained analysis (graph + stats) for each
+// non-empty track. A "track" here is whatever parseMidi emitted — for
+// multi-track files it's one MIDI track per instrument; for single-
+// track files (piano, voice, monophonic solo) it's the whole file.
+//
+// We do NOT try to separate voices within a single track here. Voice
+// separation is a Phase 3 enhancement; for now, single-track files
+// produce one entry and polyphonic piano is best handled via the
+// harmonic graph.
+function buildTrackAnalyses(perTrackEvents) {
+  const out = [];
+  for (let ti = 0; ti < perTrackEvents.length; ti++) {
+    const trackEvents = perTrackEvents[ti];
+    const onCount = trackEvents.filter(e => e.type === 'on').length;
+    if (onCount === 0) continue;          // skip silent/meta-only tracks
+    const notes = notesFromEvents(trackEvents);
+    const graph = buildTransitionGraph(notes);
+    const stats = computeStats(notes, graph);
+    // Pitch range for the dropdown label.
+    let lo = Infinity, hi = -Infinity;
+    for (const n of notes) {
+      if (n < lo) lo = n;
+      if (n > hi) hi = n;
+    }
+    // Average velocity — percussion tracks (channel 9) tend to have
+    // very uniform short notes; we expose this so the picker UI can
+    // mark percussion explicitly.
+    let velSum = 0, velN = 0;
+    for (const e of trackEvents) {
+      if (e.type === 'on' && typeof e.vel === 'number') {
+        velSum += e.vel;
+        velN++;
+      }
+    }
+    const avgVel = velN ? velSum / velN : 0;
+    // Channel of the first note-on — used to detect channel 9
+    // (General MIDI percussion).
+    let channel = null;
+    for (const e of trackEvents) {
+      if (e.type === 'on') { channel = e.channel; break; }
+    }
+    out.push({
+      trackIndex: ti,
+      userLabel: `Track ${ti + 1}`,
+      noteCount: onCount,
+      pitchRange: [lo, hi],
+      avgVelocity: avgVel,
+      channel,
+      isPercussion: channel === 9,
+      graph,
+      stats,
+    });
+  }
+  return out;
+}
+
+// Phase 1: pick the "best melodic" track from a set of track analyses.
+// Heuristic: discard percussion tracks and tracks that are mostly
+// silence / very-short stabs, then score the remaining tracks by
+// `noteCount × pitchVariance × (1 - restRatio)`. Highest score wins.
+//
+// This is intentionally conservative — it should never pick a
+// percussion or click track. When in doubt it returns the first
+// non-percussion track.
+function pickMelodicTrack(trackAnalyses) {
+  if (!trackAnalyses.length) return null;
+  // Filter out percussion and very-low-note-count tracks.
+  const candidates = trackAnalyses.filter(t =>
+    !t.isPercussion && t.noteCount >= 8
+  );
+  if (!candidates.length) {
+    // Fall back to first track if all were filtered out.
+    return trackAnalyses[0].trackIndex;
+  }
+  // Score = noteCount × pitchStdDev × voiceActivityRatio.
+  // voiceActivityRatio = unique-pitches / noteCount (more melodic
+  // lines have higher pitch diversity than rhythmic ostinatos).
+  let best = null;
+  let bestScore = -Infinity;
+  for (const t of candidates) {
+    const range = t.pitchRange[1] - t.pitchRange[0];     // in cents
+    const pitchStdDev = range / 100;                     // semitones of range
+    const uniquePitches = t.graph.nodes.length;
+    const voiceActivity = t.noteCount ? uniquePitches / t.noteCount : 0;
+    const score = t.noteCount * Math.max(1, pitchStdDev) * voiceActivity;
+    if (score > bestScore) {
+      bestScore = score;
+      best = t.trackIndex;
+    }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------------------

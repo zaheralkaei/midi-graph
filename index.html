@@ -62,10 +62,15 @@
   <!-- Graph panel — comes first so users see the structure before they
        play or look at the notation. -->
   <div class="panel hidden" id="graph-panel">
-    <h2>Transition graph</h2>
+    <h2>Transition graph <span id="graph-source-label" class="source-label"></span></h2>
     <div class="graph-wrap">
       <div id="graph"></div>
       <div class="graph-controls">
+        <label id="track-picker-row" class="track-picker-row hidden">
+          Track:
+          <select id="track-picker"></select>
+          <span id="track-picker-hint" class="track-picker-hint"></span>
+        </label>
         <button class="secondary" id="zoom-in">Zoom in</button>
         <button class="secondary" id="zoom-out">Zoom out</button>
         <button class="secondary" id="reset-zoom">Reset</button>
