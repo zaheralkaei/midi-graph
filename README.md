@@ -53,7 +53,7 @@ Both formats produce the same event shape internally, so transitions, stats, gra
 - Min probability slider hides weak edges
 - Min/max pitch sliders hide out-of-range notes
 - "Color by pitch class" toggle: 12 distinct colors per chromatic class, or single accent color
-- "Load demo" buttons load "Ya Tira" — both the MIDI (vp2-1all.mid, 1094 notes, 30 pitches) and compressed MusicXML (ya-tyra.mxl, 243 notes, 8 pitches including 2 quarter-tones). Both files are the same melody; the MIDI form lost microtonal resolution on export.
+- "Load demo" buttons load J.S. Bach's Allemande from Violin Partita No. 2 in D minor (BWV 1004). The MIDI form (`vp2-1all.mid`, 1094 notes, 30 pitches) and the compressed MusicXML form (`ya-tyra.mxl`, 243 notes, 8 pitches including 2 quarter-tones) are the same melody; the MIDI export lost microtonal resolution, so the .mxl version preserves A#↑3 and D#↑4 quarter-tones.
 
 ## Files
 
@@ -67,8 +67,8 @@ js/playback.js           # Tone.js playback (real durations, multi-tempo)
 js/sheet.js              # OSMD sheet music rendering (MusicXML only)
 js/app.js                # glue layer — wires the modules together
 examples/
-  vp2-1all.mid            # demo file — "Ya Tira", MIDI form (no quarter-tones)
-  ya-tyra.mxl             # same melody — compressed MusicXML (with quarter-tones)
+  vp2-1all.mid            # demo file — Bach Allemande BWV 1004, MIDI form (no quarter-tones)
+  ya-tyra.mxl             # same piece — compressed MusicXML (with quarter-tones)
 scripts/
   serve-nocache.py        # local dev server with no-cache headers
 tests/

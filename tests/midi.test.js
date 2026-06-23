@@ -345,9 +345,9 @@ test('detectFileType: empty or too-small file', () => {
 // a browser global and as a node require.
 // ---------------------------------------------------------------------------
 test('extractMxl: examples/ya-tyra.mxl round-trips', () => {
-  // ya-tyra.mxl is the quarter-tone demo. extractMxl should unzip it,
-  // read META-INF/container.xml, follow the rootfile pointer, and return
-  // the inner MusicXML as a string.
+  // ya-tyra.mxl is the Bach Allemande demo (compressed MusicXML form).
+  // extractMxl should unzip it, read META-INF/container.xml, follow the
+  // rootfile pointer, and return the inner MusicXML as a string.
   const mxlPath = path.join(__dirname, '..', 'examples', 'ya-tyra.mxl');
   const mxlBytes = new Uint8Array(fs.readFileSync(mxlPath));
   const errs = {};
