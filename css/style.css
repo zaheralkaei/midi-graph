@@ -157,23 +157,26 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .graph-controls input[type="checkbox"] { margin-right: 4px; }
 
 .node-label {
-  font-size: 11px;
-  fill: #e8ebf0;                                  /* light text, readable on dark bg */
-  /* Text stroke for contrast against any circle color (works on yellow,
-     green, cyan, white, etc.). 2.5px is enough to be readable without
-     making thin letters look heavy. */
-  stroke: rgba(0, 0, 0, 0.95);
-  stroke-width: 2.5px;
+  /* Drawn INSIDE the node circle (36px diameter). Pitch name on top,
+     frequency % on the bottom. The dark stroke around the text makes
+     it readable on any circle color (yellow, cyan, white, etc.). */
+  font-size: 8.5px;
+  font-weight: 600;
+  fill: #ffffff;
+  /* Dark stroke gives contrast on light-colored nodes without making
+     thin letters look heavy. 1.5px is enough at 8.5px font size. */
+  stroke: rgba(0, 0, 0, 0.92);
+  stroke-width: 1.5px;
   paint-order: stroke fill;
   pointer-events: none;
   user-select: none;
 }
 /* Frequency line: slightly dimmer so the pitch name is the primary
-   identifier. Same dark stroke ensures readability on any background. */
+   identifier. */
 .node-label .node-label-freq {
-  font-size: 9.5px;
-  fill: #aab0bc;
-  font-weight: 400;
+  font-size: 7.5px;
+  fill: #f0f0f0;
+  font-weight: 500;
 }
 .link-label {
   font-size: 9.5px;

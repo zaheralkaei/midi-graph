@@ -350,35 +350,79 @@
 // enough to use as the authoritative notation.
 // ---------------------------------------------------------------------------
 function buildSyntheticMusicXml(events, ticksPerQuarter) {
-  // Pair note_on with note_off (same logic as playback.js).
-  const pending = new Map();   // cents → tickOn
+  // Pair each note_on with its matching note_off. The MIDI may contain
+  // polyphonic chords (multiple notes sounding simultaneously) and repeated
+  // hits at the same tick, so we MUST keep a STACK of pending onsets per
+  // pitch, not just one. Earlier versions used Map<cents, tickOn> which
+  // silently overwrote earlier pending notes when a new note_on arrived
+  // for the same pitch, dropping pickup notes and producing 0-duration
+  // ghost notes. Stack semantics:
+  //   note_on  → push the onset tick onto the stack for that pitch
+  //   note_off → pop the most recent onset and emit a (start, dur, pitch)
+  //              record. If the stack is empty (orphan note_off), skip.
+  //   any pending entries left at the end → emit a default-duration note
+  //     so the user still sees the pitch (e.g. the final sustained note
+  //     of a piece with no off-event).
+  const pending = new Map();   // cents → tickOn[]  (FIFO queue of pending onsets)
   const notes = [];             // [{ startTick, durTick, cents }]
   for (const ev of events) {
     if (ev.type === 'on') {
-      pending.set(ev.note, ev.timeTicks);
+      if (!pending.has(ev.note)) pending.set(ev.note, []);
+      pending.get(ev.note).push(ev.timeTicks);
     } else if (ev.type === 'off') {
-      const tOn = pending.get(ev.note);
-      if (tOn != null) {
-        notes.push({
-          startTick: tOn,
-          durTick: Math.max(1, ev.timeTicks - tOn),
-          cents: ev.note,
-        });
-        pending.delete(ev.note);
+      const stack = pending.get(ev.note);
+      if (stack && stack.length) {
+        // FIFO (shift, not pop): the OFF closes the OLDEST pending
+        // ON. For most MIDI this is fine — note_on / note_off pairs
+        // are usually nested cleanly. The exception is the "sustained
+        // + re-articulate" pattern, where the same pitch has ON1 at
+        // tick T, ON2 at the same tick T (a re-attack), then OFF at
+        // the same tick T. With LIFO pop, OFF would close the just-
+        // started ON2 (dur=0 → 1-tick ghost), leaving ON1 dangling
+        // until the NEXT off (dur=480+). With FIFO shift, OFF at T
+        // closes ON1 (the sustained note), the dangling 1-tick ghost
+        // is avoided, and ON2 ends at the next off normally. For
+        // polyphonic chords (different pitches) FIFO and LIFO are
+        // equivalent since each pitch has its own stack.
+        const tOn = stack.shift();
+        // Floor to 1 tick — MusicXML accepts any positive integer, and
+        // a 0-duration note is visually unrenderable. This is rare in
+        // real MIDI (most sustained notes have at least 30 ticks of
+        // duration) and only happens for very short grace-note-style
+        // events at the same tick.
+        const dur = Math.max(1, ev.timeTicks - tOn);
+        notes.push({ startTick: tOn, durTick: dur, cents: ev.note });
       }
+      if (stack && stack.length === 0) pending.delete(ev.note);
     }
   }
-  // Unmatched note_ons get a default quarter.
+  // Unmatched note_ons get a default quarter so they still appear in the
+  // score rather than being silently dropped.
   const defaultDur = ticksPerQuarter || 480;
-  for (const [cents, tOn] of pending) {
-    notes.push({ startTick: tOn, durTick: defaultDur, cents });
+  for (const [cents, stack] of pending) {
+    for (const tOn of stack) {
+      notes.push({ startTick: tOn, durTick: defaultDur, cents });
+    }
   }
   // Sort by start time so the score reads top-to-bottom.
   notes.sort((a, b) => a.startTick - b.startTick);
 
-  // Pick note durations as MusicXML divisions. Use the actual durTick
-  // (MusicXML accepts any integer <duration>). The <type> tag is purely
-  // for display and we set it to the closest standard duration that fits.
+  // Pick note durations as MusicXML divisions. We round to the closest
+  // standard duration (whole/half/quarter/eighth/16th) so the visual score
+  // is readable — using the raw tick duration produces 80-tick "16th notes"
+  // and 680-tick "quarter notes" that look malformed in the engraving.
+  // The trade-off: the synth score shows APPROXIMATE durations. The actual
+  // playback (in playback.js) uses the exact real durations from the
+  // note_on/note_off pairing, so the audio is exact even though the
+  // notation is rounded.
+  //
+  // Snap-to-nearest logic:
+  //   dur 1-40     → 16th (120)    [very short grace notes snap to 16th]
+  //   dur 41-180   → 16th          [40-180 → 120, the 16th is closest]
+  //   dur 181-360  → eighth        [181-360 → 240, eighth is closest]
+  //   dur 361-720  → quarter       [361-720 → 480, quarter is closest]
+  //   dur 721-1440 → half          [721-1440 → 960, half is closest]
+  //   dur 1441+    → whole
   const q = ticksPerQuarter || 480;
   const STD_DURATIONS = [
     { name: '16th',    div: q / 4 },
@@ -388,8 +432,14 @@ function buildSyntheticMusicXml(events, ticksPerQuarter) {
     { name: 'whole',   div: q * 4 },
   ];
   function durNameFor(ticks) {
-    const std = STD_DURATIONS.filter(d => d.div <= ticks).pop();
-    return std ? std.name : '16th';
+    // Pick the standard duration with the smallest absolute distance.
+    let best = STD_DURATIONS[0];
+    let bestDiff = Math.abs(ticks - best.div);
+    for (let i = 1; i < STD_DURATIONS.length; i++) {
+      const d = Math.abs(ticks - STD_DURATIONS[i].div);
+      if (d < bestDiff) { best = STD_DURATIONS[i]; bestDiff = d; }
+    }
+    return best;
   }
 
   // Group notes by measure (4/4 time). MEASURE_TICKS = q * 4 = 1920.
@@ -403,10 +453,17 @@ function buildSyntheticMusicXml(events, ticksPerQuarter) {
   for (const n of notes) {
     const measIdx = Math.floor(n.startTick / MEASURE_TICKS);
     if (!byMeasure.has(measIdx)) byMeasure.set(measIdx, []);
+    // Use the snapped (standard) duration for both divisions and the type.
+    // The carryover logic uses `divisions` to decide if a note fits, and
+    // the rendering uses it for the <duration> element. Storing the raw
+    // durTick here would let through 60- and 80-tick notes that are
+    // unrenderable as standard notation, and would make the carryover
+    // sum drift (since 16th=120 fits 1920 evenly but 80 doesn't).
+    const dur = durNameFor(n.durTick);
     byMeasure.get(measIdx).push({
       cents: n.cents,
-      divisions: Math.max(1, n.durTick),
-      durName: durNameFor(n.durTick),
+      divisions: dur.div,
+      durName: dur.name,
     });
   }
   if (byMeasure.size === 0) byMeasure.set(0, []);
@@ -437,62 +494,107 @@ function buildSyntheticMusicXml(events, ticksPerQuarter) {
   xml.push('  <part id="P1">');
 
   const sortedMeas = Array.from(byMeasure.keys()).sort((a, b) => a - b);
-  let carryover = [];
+  // We pre-compute the total duration of each measure. A measure is
+  // "overflow" if its snapped notes sum to more than MEASURE_TICKS. The
+  // overflow notes go to the NEXT measure's carryover. The LAST measure's
+  // overflow gets truncated (synthesized scores are allowed to slightly
+  // exceed or underflow the last bar — it's a tail-end artifact).
+  //
+  // The earlier "push to carryover, break" logic created cascading
+  // overflows across many measures because the carryover consumed space
+  // the next measure needed for its own notes. The fix here: each
+  // measure's "carryover" only ever contains notes from THIS measure's
+  // overflow, not from earlier measures — and we process the carryover
+  // at the START of the next measure in a single pre-pass.
+  const overflowByMeasure = new Map();  // measureIdx → extra notes
+  for (const m of sortedMeas) {
+    const ns = byMeasure.get(m);
+    let sum = 0;
+    let cutoff = ns.length;
+    for (let i = 0; i < ns.length; i++) {
+      if (sum + ns[i].divisions > MEASURE_TICKS) {
+        cutoff = i;
+        break;
+      }
+      sum += ns[i].divisions;
+    }
+    if (cutoff < ns.length) {
+      overflowByMeasure.set(m, ns.slice(cutoff));
+    }
+  }
+
   for (const m of sortedMeas) {
     xml.push(`    <measure number="${m + 1}">`);
-    const ns = byMeasure.get(m);
+    // Notes for this measure: from `byMeasure`, up to the cutoff.
+    // Then prepend any overflow from the previous measure.
+    const ownNs = byMeasure.get(m);
+    const cutoff = overflowByMeasure.has(m)
+      ? ownNs.length - overflowByMeasure.get(m).length
+      : ownNs.length;
+    const ns = ownNs.slice(0, cutoff);
+    const prevOverflow = overflowByMeasure.get(m - 1) || [];
+    // The notes in order: previous measure's overflow first, then this
+    // measure's own. This is what the score should display (left to right).
+    const allNs = prevOverflow.concat(ns);
     let remaining = MEASURE_TICKS;
-    let ni = 0;
-    // Loop until both no more notes AND no more remaining space.
-    while (ni < ns.length || carryover.length > 0 || remaining > 0) {
-      const cur = carryover.length ? carryover.shift() : ns[ni++];
-      if (!cur) {
-        // No more notes; fill remaining with rests.
-        const restDur = STD_DURATIONS.filter(d => d.div <= remaining).pop();
-        if (!restDur) break;
-        xml.push(`      <note>`);
-        xml.push(`        <rest/>`);
-        xml.push(`        <duration>${restDur.div}</duration>`);
-        xml.push(`        <voice>1</voice>`);
-        xml.push(`        <type>${restDur.name}</type>`);
-        xml.push(`      </note>`);
-        remaining -= restDur.div;
-        continue;
+    for (const cur of allNs) {
+      if (cur.divisions > remaining) {
+        // Shouldn't happen since overflow is pre-computed, but be safe.
+        // If it does happen, truncate to fit (synth score still readable).
+        if (remaining < 1) break;
+        emitNote(cur.cents, remaining, STD_DURATIONS.find(d => d.div <= remaining) || durNameFor(remaining));
+        remaining = 0;
+        break;
       }
-      if (cur.divisions <= remaining) {
-        const sao = M.centsToStepAlterOctave(cur.cents);
-        if (sao) {
-          xml.push(`      <note>`);
-          xml.push(`        <pitch>`);
-          xml.push(`          <step>${sao.step}</step>`);
-          if (sao.alter) xml.push(`          <alter>${sao.alter}</alter>`);
-          xml.push(`          <octave>${sao.octave}</octave>`);
-          xml.push(`        </pitch>`);
-          xml.push(`        <duration>${cur.divisions}</duration>`);
-          xml.push(`        <voice>1</voice>`);
-          xml.push(`        <type>${cur.durName}</type>`);
-          xml.push(`      </note>`);
-        }
-        remaining -= cur.divisions;
-      } else {
-        // Doesn't fit — carryover to next measure.
-        carryover.push(cur);
-        // If there's room for a rest, fill with the largest fitting rest.
-        const restDur = STD_DURATIONS.filter(d => d.div <= remaining).pop();
-        if (restDur) {
-          xml.push(`      <note>`);
-          xml.push(`        <rest/>`);
-          xml.push(`        <duration>${restDur.div}</duration>`);
-          xml.push(`        <voice>1</voice>`);
-          xml.push(`        <type>${restDur.name}</type>`);
-          xml.push(`      </note>`);
-          remaining -= restDur.div;
-        } else {
-          break;  // no room for rest either; carryover will be processed next measure
-        }
-      }
+      emitNote(cur.cents, cur.divisions, cur);
+      remaining -= cur.divisions;
+    }
+    // Fill any remaining space with rests (so the measure is exactly 4/4).
+    while (remaining > 0) {
+      const restDur = STD_DURATIONS.filter(d => d.div <= remaining).pop();
+      if (!restDur) break;
+      xml.push(`      <note>`);
+      xml.push(`        <rest/>`);
+      xml.push(`        <duration>${restDur.div}</duration>`);
+      xml.push(`        <voice>1</voice>`);
+      xml.push(`        <type>${restDur.name}</type>`);
+      xml.push(`      </note>`);
+      remaining -= restDur.div;
     }
     xml.push(`    </measure>`);
+  }
+
+  // Emit any carryover from the LAST measure's overflow as a final
+  // overflow measure. Without this, the last measure's last few notes
+  // would be silently dropped.
+  const lastOverflow = overflowByMeasure.get(sortedMeas[sortedMeas.length - 1]);
+  if (lastOverflow && lastOverflow.length > 0) {
+    const nextNum = sortedMeas.length + 1;
+    xml.push(`    <measure number="${nextNum}">`);
+    for (const cur of lastOverflow) {
+      emitNote(cur.cents, cur.divisions, cur);
+    }
+    xml.push(`    </measure>`);
+  }
+
+  // Helper: emit a single note element. Inlined here to avoid a closure
+  // problem with the previous loop.
+  function emitNote(cents, duration, durObj) {
+    const sao = M.centsToStepAlterOctave(cents);
+    if (!sao) return;
+    const durName = (typeof durObj === 'string') ? durObj
+                  : (durObj.durName) ? durObj.durName
+                  : durNameFor(duration).name;
+    xml.push(`      <note>`);
+    xml.push(`        <pitch>`);
+    xml.push(`          <step>${sao.step}</step>`);
+    if (sao.alter) xml.push(`          <alter>${sao.alter}</alter>`);
+    xml.push(`          <octave>${sao.octave}</octave>`);
+    xml.push(`        </pitch>`);
+    xml.push(`        <duration>${duration}</duration>`);
+    xml.push(`        <voice>1</voice>`);
+    xml.push(`        <type>${durName}</type>`);
+    xml.push(`      </note>`);
   }
 
   xml.push('  </part>');

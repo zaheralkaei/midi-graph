@@ -27,26 +27,35 @@
     const onNoteOff = cb.onNoteOff || (() => {});
 
     // Build per-note durations: pair each on with its matching off.
-    const pending = new Map();   // cents → [tickOn]
+    // Use a FIFO queue of pending onsets per pitch. The OFF closes
+    // the OLDEST pending ON, which avoids 1-tick ghost notes on the
+    // "sustained + re-articulate" pattern (ON1, ON2 same tick, OFF
+    // same tick: shift() closes ON1, pop() would close ON2 with dur=0).
+    // For polyphonic chords (different pitches) FIFO and LIFO are
+    // equivalent since each pitch has its own queue.
+    const pending = new Map();   // cents → tickOn[]  (FIFO queue)
     const notes = [];             // [{ startSec, durSec, cents }]
     for (const ev of events) {
       if (ev.type === 'on') {
-        pending.set(ev.note, [ev.timeTicks]);
+        if (!pending.has(ev.note)) pending.set(ev.note, []);
+        pending.get(ev.note).push(ev.timeTicks);
       } else if (ev.type === 'off') {
-        const start = pending.get(ev.note);
-        if (start) {
-          const [tOn] = start;
+        const stack = pending.get(ev.note);
+        if (stack && stack.length) {
+          const tOn = stack.shift();
           const startSec = tickToSec(tOn);
           const endSec = tickToSec(ev.timeTicks);
           let durSec = Math.max(0.05, endSec - startSec);
           if (!isFinite(durSec) || durSec > 1.0) durSec = 1.0;
           notes.push({ startSec, durSec, cents: ev.note });
-          pending.delete(ev.note);
         }
+        if (stack && stack.length === 0) pending.delete(ev.note);
       }
     }
-    for (const [cents, [tOn]] of pending) {
-      notes.push({ startSec: tickToSec(tOn), durSec: 0.5, cents });
+    for (const [cents, stack] of pending) {
+      for (const tOn of stack) {
+        notes.push({ startSec: tickToSec(tOn), durSec: 0.5, cents });
+      }
     }
     notes.sort((a, b) => a.startSec - b.startSec);
 

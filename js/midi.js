@@ -373,7 +373,17 @@ function buildTransitionGraph(notes) {
     for (const [nxt, count] of inner) {
       const nxtName = centsToPitch(nxt);
       nodeSet.add(nxtName);
-      links.push({ source: curName, target: nxtName, value: count / total });
+      // `count` is the raw number of times this transition occurred
+      // (used for the hover tooltip in graph.js). `value` is the
+      // conditional probability: P(nxt | cur) = count / total-out-from-cur.
+      // Both are kept on the link object so the graph can render the
+      // label (value * 100%) and the tooltip (count) from the same data.
+      links.push({
+        source: curName,
+        target: nxtName,
+        value: count / total,
+        count,
+      });
     }
   }
   // Include every pitch in freq (covers the last note of the piece

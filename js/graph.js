@@ -240,22 +240,24 @@
       // placement was hard to read on light-colored nodes (yellow, etc).
       const labelSel = labelGroup.selectAll('text').data(nodes, d => d.id);
       labelSel.exit().remove();
+      // Labels are drawn INSIDE the node circle (not beside it). With
+      // NODE_R=18 the inner diameter is 36px, so we use a small font
+      // (8.5px) and 2 short lines: pitch name on top, frequency % on
+      // the bottom. text-anchor=middle and dominant-baseline=central
+      // center the text on the node's (x, y) — no dx needed.
       const labelEnter = labelSel.enter().append('text')
         .attr('class', 'node-label')
-        .attr('text-anchor', 'start')
+        .attr('text-anchor', 'middle')
         .attr('dominant-baseline', 'central')
-        .attr('dx', NODE_R + 6);
-      // First tspan: pitch name (e.g. "C4"). No x attr — inherits the
-      // text element's x position so it draws at (node.x + dx, node.y).
+        .attr('dy', '-0.45em');
+      // First tspan: pitch name (e.g. "C4"). Sits on the upper half.
       labelEnter.append('tspan').attr('class', 'node-label-name');
-      // Second tspan: frequency percentage on a new line below the name.
-      // dy: 1.1em moves it below the first line. No x — also inherits
-      // parent's x. (Setting x here would place the tspan at SVG x=24
-      // regardless of node position, which is what was making the
-      // frequency line render at the top-left of the SVG until the
-      // user toggled 'Color by pitch class' to trigger a re-layout.)
+      // Second tspan: frequency % on the line below the name. dy=0.9em
+      // puts it just under the first line. No x attr — inherits the
+      // text element's x position (which the tick handler sets to d.x).
       labelEnter.append('tspan').attr('class', 'node-label-freq')
-        .attr('dy', '1.1em');
+        .attr('dy', '0.9em')
+        .attr('x', 0);  // reset the relative dx from the parent tspan
       labelSel.merge(labelEnter).select('.node-label-name')
         .text(d => d.id);
       labelSel.merge(labelEnter).select('.node-label-freq')
@@ -268,6 +270,18 @@
       // Edge hover: highlight the edge + swap to the white arrow marker.
       // (Labels are now always visible — was previously toggled via .visible
       // class on hover, but that's gone.)
+      // Tooltip: a browser-native <title> attached to each edge path. The
+      // d.count and d.value fields come from buildTransitionGraph (count
+      // = number of times this transition occurred, value = count/cur_total
+      // = transition probability for this source's outgoing edges).
+      linkAll.append('title')
+        .text(d => {
+          const src = typeof d.source === 'object' ? d.source.id : d.source;
+          const tgt = typeof d.target === 'object' ? d.target.id : d.target;
+          const pct = (d.value * 100);
+          const pctStr = pct < 1 ? pct.toFixed(2) : pct.toFixed(1);
+          return `${src} → ${tgt} — ${d.count}× (${pctStr}% of outgoing from ${src})`;
+        });
       linkAll
         .on('mouseenter', function(ev, d) {
           d3.select(this).attr('stroke', '#fff').attr('stroke-opacity', 1)
@@ -341,6 +355,12 @@
         // top-left, not next to their nodes.
         const labelAll = labelSel.merge(labelEnter);
         labelAll.attr('x', d => d.x).attr('y', d => d.y);
+        // The frequency tspan has x=0 set statically (to reset the
+        // parent's relative dx). We need to override that to the
+        // node's actual x so the second line centers on the node,
+        // not the SVG's left edge. Without this, "0.91%" appears at
+        // SVG (0, ~node.y) instead of centered under "A#3".
+        labelAll.select('.node-label-freq').attr('x', d => d.x);
       });
     }
 
