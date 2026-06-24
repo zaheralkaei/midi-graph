@@ -59,8 +59,10 @@ The page is laid out in a single column with the **melodic** and
 **harmonic** graphs side-by-side in their own row. From top to
 bottom:
 
-1. **Title** — centered, with a subtitle left-aligned beneath.
-2. **Upload** — file picker, two demo loaders (Bach Allemande `.mid`
+1. **Title** — centered (`midi-graph`), with the tagline
+   `note-transition visualizer · MIDI & MusicXML` centered
+   directly below it.
+2. **Upload** — file picker, two demo loaders (Twinkle Twinkle `.mid`
    and ya-tyra `.mxl`), and the loaded-filename display. Always
    visible so you can swap files without scrolling.
 3. **Playback** — Play / Stop buttons and a status line. Disabled
@@ -355,11 +357,11 @@ compiled to WebAssembly. It does a real MIDI → MusicXML conversion
 with proper engraving: beam grouping, voice separation, slurs,
 articulations, dynamic markings, key and time signatures inferred
 from the MIDI, and even reads tempo/text meta events into a
-`<work><work-title>` / `<identification><creator>` block. The Bach
-Allemande demo, for example, gets titled "Six Sonatas and Partitas
-for Solo Violin" with composer "Johann Sebastian Bach (1685-1750)"
-and tempo "♩ = 220" automatically. The 9 MB WASM bundle is
-vendored under `vendor/webmscore/` (lazy-loaded only when a MIDI
+`<work><work-title>` / `<identification><creator>` block. The
+Twinkle Twinkle demo, for example, gets titled "Twinkle, Twinkle,
+Little Star" with composer and tempo populated automatically.
+The 9 MB WASM bundle is vendored under `vendor/webmscore/` (lazy-loaded
+only when a MIDI
 import happens), so MXL-only users never pay the cost.
 
 **Route 2 — hand-rolled synth (fallback).** If webmscore fails to
@@ -447,9 +449,12 @@ stats, graph, and playback all work identically regardless of source.
 
 - **Choose File** — upload any supported file. Drag-and-drop is
   supported in most browsers.
-- **Load demo (Bach Allemande, .mid)** — J.S. Bach's Allemande from
-  Violin Partita No. 2 in D minor, BWV 1004, in standard 12-TET MIDI
-  (`vp2-1all.mid`, 1094 notes, 30 unique pitches, 193 transitions).
+- **Load demo (Twinkle Twinkle, .mid)** — classic nursery rhyme in
+  a 4-voice arrangement (Twinkle, Twinkle, Little Star + variations
+  / ABC + alphabet song sharing the same harmony), in standard 12-TET
+  MIDI (`twinkle_twinkle.mid`, 144 notes, 13 unique pitches, 5 tracks).
+  Demonstrates the multi-track glow (track picker appears because
+  there are 4 non-empty tracks) and clean I-V-IV chord detection.
 - **Load demo (ya-tyra, .mxl)** — "يا طيرة طيري يا حمامة" (O little
   bird, fly O pigeon), a traditional Arabic maqam piece in compressed
   MusicXML (`ya-tyra.mxl`, 243 notes, 8 unique pitches, 28 transitions,
@@ -492,7 +497,7 @@ js/playback.js           # Tone.js playback (real durations, multi-tempo, replay
 js/sheet.js              # OSMD sheet music rendering
 js/app.js                # glue layer — wires the modules together
 examples/
-  vp2-1all.mid            # demo file — Bach Allemande BWV 1004, MIDI form (12-TET, 1094 notes)
+  twinkle_twinkle.mid     # demo file — Twinkle Twinkle (nursery rhyme, 4-voice, 12-TET, 144 notes)
   ya-tyra.mxl             # demo file — Arabic maqam "ya tayra", compressed MusicXML (with quarter-tones)
 scripts/
   serve-nocache.py        # local dev server with no-cache headers (for development)

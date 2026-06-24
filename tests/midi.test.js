@@ -391,7 +391,7 @@ test('detectFileType: empty or too-small file', () => {
 // a browser global and as a node require.
 // ---------------------------------------------------------------------------
 test('extractMxl: examples/ya-tyra.mxl round-trips', () => {
-  // ya-tyra.mxl is the Bach Allemande demo (compressed MusicXML form).
+  // ya-tyra.mxl is the Arabic maqam demo (compressed MusicXML form).
   // extractMxl should unzip it, read META-INF/container.xml, follow the
   // rootfile pointer, and return the inner MusicXML as a string.
   const mxlPath = path.join(__dirname, '..', 'examples', 'ya-tyra.mxl');
@@ -567,20 +567,21 @@ test('parseMidi: rejects non-MThd file', () => {
 });
 
 test('parseMidi: real demo file has expected stats', () => {
-  // vp2-1all.mid — the MIDI demo. 1094 notes spanning 30 unique pitches
-  // (G#3 through D6). Confirms the parser + transition graph + stats work
-  // end-to-end on a real file, not just synthetic test fixtures.
-  const file = path.join(__dirname, '..', 'examples', 'vp2-1all.mid');
+  // twinkle_twinkle.mid — the MIDI demo. Multi-track (4 voices) Twinkle
+  // Twinkle Little Star. 144 notes spanning 13 unique pitches (D3–B4
+  // range, 22 semitones). Confirms the parser + transition graph +
+  // stats work end-to-end on a real file, not just synthetic fixtures.
+  const file = path.join(__dirname, '..', 'examples', 'twinkle_twinkle.mid');
   const bytes = new Uint8Array(fs.readFileSync(file));
   const { stats } = m.analyzeMidi(bytes);
-  assertEqual(stats.note_count, 1094);
-  assertEqual(stats.unique_note_count, 30);
-  assertEqual(stats.transition_count, 193);
+  assertEqual(stats.note_count, 144);
+  assertEqual(stats.unique_note_count, 13);
+  assertEqual(stats.transition_count, 40);
   // Top transition should be deterministic.
   assertEqual(stats.all_transitions[0].probability, 1);
-  // Pitch range endpoints (sample a couple, not all 30).
-  assert(stats.unique_notes.includes('G#3'));
-  assert(stats.unique_notes.includes('D6'));
+  // Pitch range endpoints (sample a couple, not all 13).
+  assert(stats.unique_notes.includes('D3'));
+  assert(stats.unique_notes.includes('B4'));
   assert(!stats.unique_notes.includes('C-1'));
 });
 
@@ -732,8 +733,9 @@ test('ticksToSecondsSegments: piecewise timing is right', () => {
 test('computeStats: all_transitions contains EVERY transition (not just top 5)', () => {
   // Regression test for the user-reported bug "not all transitions percents
   // are shown". The old behavior was top_transitions = ranked.slice(0, 5),
-  // which silently dropped the rest. With dense pieces (vp2-1all.mid has
-  // 193 transitions), 188 of them vanished from the stats panel. Now
+  // which silently dropped the rest. With dense pieces (the previous
+  // Bach demo had 193 transitions, the new Twinkle demo has 40),
+  // most of them vanished from the stats panel. Now
   // all_transitions returns every link, sorted by probability descending.
   //
   // Build a graph with 8 transitions and verify all 8 appear.
@@ -976,7 +978,8 @@ test('pickMelodicTrack: rejects very-low-note-count tracks', () => {
 });
 
 test('analyzeMidi: single-track file returns one trackAnalyses entry', () => {
-  // Bach Allemande-style single-track file.
+  // Simple single-track synth-style file (similar layout to many
+  // MIDI exports — one track per part, melodic notes only).
   const ev = [
     { type: 'on',  tick: 0,    note: 60, vel: 80, channel: 0 },
     { type: 'off', tick: 480,  note: 60, vel: 0,  channel: 0 },

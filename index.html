@@ -40,7 +40,7 @@
   <div class="panel">
     <div class="upload-row">
       <input type="file" id="file" accept=".mid,.midi,.musicxml,.xml,.mxl">
-      <button type="button" id="load-demo-midi">Load demo (Bach Allemande, .mid)</button>
+      <button type="button" id="load-demo-midi">Load demo (Twinkle Twinkle, .mid)</button>
       <button type="button" id="load-demo-xml">Load demo (ya-tyra, .mxl)</button>
       <span id="filename-display" class="filename-display"></span>
     </div>
@@ -191,7 +191,7 @@
 
     <h3>How to use it</h3>
     <ol>
-      <li>Click <strong>Load demo (Bach Allemande, .mid)</strong> or <strong>Load demo (ya-tyra, .mxl)</strong> for a one-click example, or use <strong>Choose File</strong> to upload your own. Drag-and-drop also works in most browsers.</li>
+      <li>Click <strong>Load demo (Twinkle Twinkle, .mid)</strong> or <strong>Load demo (ya-tyra, .mxl)</strong> for a one-click example, or use <strong>Choose File</strong> to upload your own. Drag-and-drop also works in most browsers.</li>
       <li>Read the <strong>Summary</strong> panel for an at-a-glance overview.</li>
       <li>Explore the <strong>Transition graph</strong>: each node shows the pitch + its share of the piece; each arrow shows the conditional probability of "next note given current note". Hover an arrow to see the count + percentage.</li>
       <li>Press <strong>▶ Play</strong> to hear the piece — the graph glows on every sounding pitch. <strong>■ Stop</strong> works mid-piece; you can replay immediately.</li>
@@ -205,7 +205,7 @@
     </ul>
 
     <h3>The two demos are different pieces</h3>
-    <p>The <strong>Bach Allemande</strong> demo is the Allemande from J.S. Bach's Violin Partita No. 2 in D minor, BWV 1004, in standard 12-TET MIDI (1094 notes, 30 pitches). The <strong>ya-tyra</strong> demo is the Arabic maqam piece "يا طيرة طيري يا حمامة" (O little bird, fly O pigeon) in compressed MusicXML (243 notes, 8 pitches, with quarter-tones). They showcase different features: Bach → dense transitions + synthetic sheet music from MIDI; ya-tyra → microtonal support + .mxl (zip) extraction + real notation.</p>
+    <p>The <strong>Twinkle Twinkle</strong> demo is the classic nursery rhyme in a 4-voice arrangement (Twinkle, Twinkle, Little Star + variations / ABC melody + alphabet song sharing the same harmony), standard 12-TET MIDI (144 notes, 13 pitches, 5 tracks). The <strong>ya-tyra</strong> demo is the Arabic maqam piece "يا طيرة طيري يا حمامة" (O little bird, fly O pigeon) in compressed MusicXML (243 notes, 8 pitches, with quarter-tones). They showcase different features: Twinkle → clean triadic harmony (I-V-I-vi-IV-V-I) + synthetic sheet music from MIDI + multi-track glow; ya-tyra → microtonal support + .mxl (zip) extraction + real notation.</p>
 
     <h3>Quarter-tones</h3>
     <p>Quarter-tones are preserved exactly as cents (1/100 of a semitone). The display uses the compact form <code>C↑4</code> / <code>D#↑4</code> for half-sharps. The ya-tyra demo's source XML actually encodes the quarter-tones as half-FLATS (B↓3 and E↓4), but the app reports them as the sharp-spelled enharmonic names A#↑3 and D#↑4 — same pitch, different spelling. See the README for the full details.</p>

@@ -19,9 +19,9 @@ body {
 .wrap { max-width: 1280px; margin: 0 auto; padding: 20px; position: relative; }
 h1 {
   margin: 0 0 4px 0;
-  font-size: 22px;
-  font-weight: 500;
-  letter-spacing: 0.3px;
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
   display: flex;
   align-items: baseline;
   gap: 10px;
@@ -142,9 +142,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .top-transitions .pct { color: var(--accent); margin-left: 6px; }
 
 /* ALL-transitions list — vertical, scrollable, dense. Used when the graph
-   has more than ~5 transitions (vp2-1all.mid has 193). The list shows every
-   transition in probability-descending order so the user can see the full
-   distribution, not just the top 5. */
+   has more than ~5 transitions (e.g. 40+ in twinkle_twinkle.mid). The list
+   shows every transition in probability-descending order so the user can
+   see the full distribution, not just the top 5. */
 .transition-list {
   list-style: none;
   padding: 0;

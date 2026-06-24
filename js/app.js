@@ -625,13 +625,13 @@
 
   loadDemoMidiBtn.addEventListener('click', async () => {
     playbackInfo.textContent = 'Loading demo MIDI…';
-    const resp = await fetch('examples/vp2-1all.mid');
+    const resp = await fetch('examples/twinkle_twinkle.mid');
     if (!resp.ok) {
       playbackInfo.textContent = 'Demo MIDI fetch failed (status ' + resp.status + ').';
       return;
     }
     const buf = await resp.arrayBuffer();
-    await loadBytes(new Uint8Array(buf), 'examples/vp2-1all.mid');
+    await loadBytes(new Uint8Array(buf), 'examples/twinkle_twinkle.mid');
   });
 
   loadDemoXmlBtn.addEventListener('click', async () => {

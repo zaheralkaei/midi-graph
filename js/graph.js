@@ -359,7 +359,7 @@
         .text(d => {
           const pct = (d.frequency || 0) * 100;
           const cnt = d.count || 0;
-          // Two decimals for sub-1% pitches (vp2-1all.mid has many).
+          // Two decimals for sub-1% pitches (common in dense progressions).
           return `${cnt}\u00a0\u00a0${pct < 1 ? pct.toFixed(2) : pct.toFixed(1)}%`;
         });
 
