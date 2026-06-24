@@ -16,9 +16,11 @@ professional-grade engraving — proper beam grouping, voice separation,
 slurs, articulations, key signature, dynamics — the same quality you'd
 get from desktop MuseScore).
 
+**Live demo:** [midi-graph.netlify.app](https://midi-graph.netlify.app/).
+
 **100% static.** No server, no Python, no install. The whole app is
-HTML + JS + CSS + a 9 MB vendored WASM bundle. Drag the folder onto
-Netlify and you're done.
+HTML + JS + CSS + a 9 MB vendored WASM bundle. Just open `index.html`
+in a browser, or use the live demo link above.
 
 ---
 
@@ -34,18 +36,20 @@ python scripts/serve-nocache.py
 # then open http://localhost:8000
 ```
 
-## Deploy to Netlify
+## Deploy your own
 
-**Drag-and-drop**: go to https://app.netlify.com/drop, drop this folder.
-Done. Netlify serves the static files; no build step.
+The app is already deployed at **[midi-graph.netlify.app](https://midi-graph.netlify.app/)**
+— if you want to host your own copy, the fastest options are:
 
-**CLI**: `netlify deploy --prod --dir=.`
+- **Drag-and-drop**: go to https://app.netlify.com/drop, drop this folder.
+  Done. Netlify serves the static files; no build step.
+- **CLI**: `netlify deploy --prod --dir=.`
+- **Git-based**: push to GitHub, connect the repo at app.netlify.com, deploy.
 
-**Git-based**: push to GitHub, connect the repo at app.netlify.com, deploy.
-
-`netlify.toml` is optional — it's `publish = "."` with no build command.
-Without it, Netlify defaults to publishing the repo root, which is what
-we want.
+`netlify.toml` is included with `publish = "."` and the right
+content-type headers (so `.mxl` downloads as `application/vnd.recordare.musicxml`
+instead of `application/octet-stream`). If you deploy without it,
+Netlify defaults to publishing the repo root, which also works.
 
 ---
 
@@ -489,7 +493,7 @@ scripts/
 tests/
   midi.test.js            # node smoke tests for midi.js (parsing, transitions, stats, rounding)
   musicxml.test.js        # node smoke tests for musicxml.js (parsing, quarter-tones, synth)
-netlify.toml              # optional — `publish = "."` and content-type headers
+netlify.toml              # `publish = "."` and content-type headers for .mxl
 package.json              # devDependencies only (@xmldom/xmldom + fflate for tests)
 ```
 
@@ -499,12 +503,17 @@ package.json              # devDependencies only (@xmldom/xmldom + fflate for te
 npm install              # one-time: gets @xmldom/xmldom + fflate for tests
 node tests/midi.test.js
 node tests/musicxml.test.js
+node tests/harmonic.test.js
+node tests/playback.test.js
 ```
 
-97 tests covering parsing, transitions, stats, multi-tempo timing
-(MIDI + MusicXML), banker's-rounding for eighth-tones,
-negative-cents guards, .mxl extraction, content-sniffing file
-routing, the synth carryover, and the real example files.
+134 tests covering parsing, transitions, stats, multi-tempo timing
+(MIDI + MusicXML), banker's-rounding for eighth-tones, chord
+detection across template / neutral-triad / literal-spelling paths,
+playback schedule timing (wall-clock vs relative seconds — the bug
+behind an earlier "chord glow jumps" report), .mxl extraction,
+content-sniffing file routing, the synth carryover, and the real
+example files.
 
 ## Limits
 
