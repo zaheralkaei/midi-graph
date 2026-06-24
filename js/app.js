@@ -311,6 +311,13 @@
       ticksPerQuarter: currentResult.ticksPerQuarter,
       windowTicks,
     });
+    // Phase 3 fix: scheduleChordGlow reads from currentResult.chordWindows,
+    // so the playback glow must use the SAME windows the graph is showing.
+    // Without this, changing the harmonic window and then pressing Play
+    // would highlight nodes at the wrong times (jumping from chord to
+    // chord with no smooth transition because the schedule was built
+    // with the old, smaller window's time base).
+    currentResult.chordWindows = currentChordWindows;
     const chordGraph = M.buildChordTransitionGraph(currentChordWindows);
     // Destroy any previous harmonic controller so we don't leak D3 listeners.
     if (currentHarmonicController) {

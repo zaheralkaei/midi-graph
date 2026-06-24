@@ -319,13 +319,11 @@
       // for both modes (chord mode mirrors the pitch-graph layout —
       // name on top, frequency % on the second line).
       labelEnter.append('tspan').attr('class', 'node-label-name');
-      // Second tspan: frequency % on the line below the name. dy=0.9em
-      // puts it just under the first line. No x attr — inherits the
-      // text element's x position (which the tick handler sets to d.x).
-      // Added in chord mode too so the chord graph mirrors the pitch
-      // graph visually — the user asked for "just the percentage, like
-      // the pitch transition glow" for the chord graph. The absolute
-      // count stays in the tooltip.
+      // Second tspan: count and frequency % on the line below the name.
+      // Format: "5  2.4%" — absolute count and percentage separated
+      // by a non-breaking space. The user wanted both numbers visible
+      // at a glance. The label is hidden if it would overflow the
+      // panel (clipped by overflow:hidden on the parent).
       labelEnter.append('tspan').attr('class', 'node-label-freq')
         .attr('dy', '0.9em')
         .attr('x', 0);  // reset the relative dx from the parent tspan
@@ -334,8 +332,9 @@
       labelSel.merge(labelEnter).select('.node-label-freq')
         .text(d => {
           const pct = (d.frequency || 0) * 100;
+          const cnt = d.count || 0;
           // Two decimals for sub-1% pitches (vp2-1all.mid has many).
-          return `${pct < 1 ? pct.toFixed(2) : pct.toFixed(1)}%`;
+          return `${cnt}\u00a0\u00a0${pct < 1 ? pct.toFixed(2) : pct.toFixed(1)}%`;
         });
 
       // Edge hover: highlight the edge + swap to the white arrow marker.

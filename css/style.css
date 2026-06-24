@@ -195,13 +195,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 /* ----- Graph ----- */
-.graph-wrap { position: relative; }
-#graph { width: 100%; height: 640px; background: #0a0b0e; border-radius: 4px; }
+.graph-wrap { position: relative; overflow: hidden; }
+/* Both graphs are pinned to 560 px in the side-by-side layout so the
+   two visualizations feel balanced regardless of which controls wrap
+   to a second line. The flex column on each panel keeps the wrap
+   aligned to the same row height; we just override the per-graph
+   height here to match. */
+#graph { width: 100%; height: 560px; background: #0a0b0e; border-radius: 4px; }
 #harmonic-graph {
-  /* Harmonic graphs typically have fewer nodes (chords are fewer than
-     pitches) so the SVG can be a bit shorter than the melodic one. */
   width: 100%;
-  height: 480px;
+  height: 560px;
   background: #0a0b0e;
   border-radius: 4px;
 }
@@ -209,18 +212,51 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* Side-by-side graph layout. Two columns on wide viewports, stacks
    vertically when the screen is too narrow for both graphs to be
    legible. The gap matches the panel margin-bottom so the visual
-   rhythm stays consistent. */
+   rhythm stays consistent. The row is forced to a single 1fr row
+   and each panel is stretched to fill the cell so the two graph
+   panels end up exactly the same height — important because the
+   user sees them side by side and a height mismatch looks broken.
+   The chord-sequence list inside the harmonic panel is hidden in
+   the side-by-side case so the harmonic graph can stretch to match
+   the melodic graph (the list shows up below in the stacked case). */
 .graphs-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
   gap: 14px;
   margin-bottom: 14px;
 }
-.graphs-row .panel { margin-bottom: 0; }
+.graphs-row .panel {
+  margin-bottom: 0;
+  /* Stretch each panel to the full height of the row so the two
+     graph panels are exactly equal in height. The panel's
+     internal flex column (h2 + controls + graph) keeps the
+     graph SVG from overflowing the panel. */
+  display: flex;
+  flex-direction: column;
+}
+.graphs-row .panel .graph-wrap { flex: 1 1 auto; min-height: 0; }
+/* In the side-by-side case the graphs use their own fixed height
+   (560px) rather than stretching to the wrap — both panels have
+   different control bar heights (the melodic bar is taller because
+   of the 3 range sliders), so letting each graph stretch to its
+   wrap would make them visually unequal. Equal fixed heights give
+   the user two graphs of the same size. The stacked case below
+   switches to height:auto so each graph sizes to its own viewport. */
+/* Hide the chord-sequence list in the side-by-side layout so the
+   harmonic graph can match the melodic graph's height. The list
+   reappears in the stacked layout (below 1100px). */
+.graphs-row .chord-sequence-panel { display: none; }
 @media (max-width: 1100px) {
   /* Stack when the viewport can't comfortably fit two graphs side by
-     side. Threshold chosen so each graph is at least ~520 px wide. */
-  .graphs-row { grid-template-columns: 1fr; }
+     side. Threshold chosen so each graph is at least ~520 px wide.
+     When stacked, the panels naturally size to their own content
+     (the flex-stretch only applies to the side-by-side case). */
+  .graphs-row { grid-template-columns: 1fr; grid-template-rows: auto; }
+  .graphs-row .panel { display: block; }
+  .graphs-row .panel #graph,
+  .graphs-row .panel #harmonic-graph { height: 460px; }
+  .graphs-row .chord-sequence-panel { display: block; }
 }
 
 /* The settings bar can sit above the graph (preferred for the new
@@ -324,9 +360,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
    element, not to a parent g.node group, so the selector is
    `circle.active` (or `circle.node.active` for extra safety). The
    previous `.node.active` selector never matched. */
+/* Phase 3 fix: the glow fades in over 150 ms and out over 250 ms
+   so chord transitions during playback look smooth instead of
+   snapping on/off. The pulse animation is layered on top — the
+   base state is the weak pulse from-keyframe and the filter
+   transition provides the cross-fade between inactive (no filter)
+   and active (pulsing filter). Without the transition the glow
+   pops on/off and fast chord changes look like a strobe. */
 circle.node,
 circle {
-  /* No filter by default — needed so non-active nodes render fast. */
+  transition: filter 150ms ease-out;
 }
 circle.node.active,
 circle.active {
