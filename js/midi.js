@@ -1357,6 +1357,11 @@ const api = {
   ticksToSeconds,
   ticksToSecondsSegments,
   analyzeMidi,
+  // Phase 1: per-track analysis (used by analyzeMidi; re-used by
+  // analyzeMusicXml so it can build a track picker for multi-part
+  // scores).
+  buildTrackAnalyses,
+  pickMelodicTrack,
   detectFileType,
   extractMxl,
   // Phase 2: harmonic analysis

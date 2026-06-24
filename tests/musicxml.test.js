@@ -442,6 +442,59 @@ test('analyzeMusicXml + chordSequence: I-IV-V-I-vi-ii-V7-I in C major', () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Regression: analyzeMusicXml must return the same shape as analyzeMidi so
+// the harmonic graph, chord glow, and track picker all work for MusicXML
+// files. Before this fix, analyzeMusicXml returned only
+// { graph, stats, events, ticksPerQuarter, parts, measures } and the
+// harmonic panel was hidden because chordWindows was undefined, and the
+// track picker was hidden because trackAnalyses was empty.
+// ---------------------------------------------------------------------------
+test('analyzeMusicXml returns the analyzeMidi-compatible shape', () => {
+  // Build a tiny 2-part MusicXML with 2 measures.
+  const xmlText = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list>
+    <score-part id="P1"><part-name>Soprano</part-name></score-part>
+    <score-part id="P2"><part-name>Alto</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>480</divisions></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+    </measure>
+    <measure number="2">
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+    </measure>
+  </part>
+  <part id="P2">
+    <measure number="1">
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+      <note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+    </measure>
+    <measure number="2">
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+      <note><chord/><pitch><step>C</step><octave>5</octave></pitch><duration>1920</duration><type>whole</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+  const r = xml.analyzeMusicXml(xmlText);
+  // analyzeMidi-compatible fields must all be present and non-empty.
+  assert(Array.isArray(r.trackAnalyses), 'trackAnalyses should be an array');
+  assert(r.trackAnalyses.length === 2, `trackAnalyses should have 2 entries, got ${r.trackAnalyses.length}`);
+  assertEqual(r.trackAnalyses[0].userLabel, 'Soprano', 'first part should be labeled "Soprano"');
+  assertEqual(r.trackAnalyses[1].userLabel, 'Alto', 'second part should be labeled "Alto"');
+  assert(Array.isArray(r.chordWindows), 'chordWindows should be an array');
+  assert(r.chordWindows.length > 0, 'chordWindows should be populated');
+  // The harmonic graph would see C+E in m1 (C major) and F+A in m2 (F major).
+  const m1Label = r.chordWindows[0].label;
+  const m2Label = r.chordWindows[4].label;
+  assertEqual(m1Label, 'C', `m1 should be "C", got "${m1Label}"`);
+  assertEqual(m2Label, 'F', `m2 should be "F", got "${m2Label}"`);
+  assertEqual(typeof r.monophonic, 'boolean', 'monophonic should be a boolean');
+  assertEqual(r.monophonic, false, 'two parts playing together is not monophonic');
+});
+
 console.log('-----------------');
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

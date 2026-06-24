@@ -285,9 +285,12 @@
   function renderHarmonicView() {
     if (!currentResult || !M.chordSequence) return;
     const harmonicNotice = document.getElementById('harmonic-monophonic-notice');
-    // MusicXML/MXL path doesn't include chord data in analyzeMusicXml,
-    // so the current result has no chordWindows. Hide the panel
-    // entirely rather than showing a half-empty view.
+    // analyzeMusicXml now returns the same shape as analyzeMidi
+    // (trackAnalyses, chordWindows, monophonic) so the harmonic
+    // panel works for both file types. The branch below is kept
+    // for defensive handling of an older result object that might
+    // still be in flight (e.g. during a partial state where the
+    // chordSequence call didn't complete).
     if (!currentResult.chordWindows && !currentResult.monophonic) {
       harmonicPanel.classList.add('hidden');
       return;

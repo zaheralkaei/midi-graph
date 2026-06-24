@@ -138,6 +138,11 @@
     const defaultTempoBPM = 120;
 
     const events = [];
+    // Phase fix: collect per-part events so analyzeMusicXml can build
+    // trackAnalyses (one per part), enabling the melodic track picker
+    // for multi-part MusicXML files. eventsByPart[i] is the events
+    // that came from the i-th part in partEls order.
+    const eventsByPart = [];
     const measures = [];
     // Collect tempo-change points during parsing, then stamp each event in a
     // separate sweep. Format: sorted array of { tick, bpm } by tick ascending.
@@ -146,8 +151,11 @@
     const tempoChanges = [{ tick: 0, bpm: defaultTempoBPM }];
 
     // Walk each part.
-    for (const partEl of partEls) {
+    for (let partIdx = 0; partIdx < partEls.length; partIdx++) {
+      const partEl = partEls[partIdx];
       const measureEls = Array.from(partEl.getElementsByTagName('measure'));
+      // Initialize the per-part events array for this part.
+      const partEvents = [];
       for (const measureEl of measureEls) {
         const measureNumber = measureEl.getAttribute('number') || '?';
         const measureStartTick = currentTickForPart(partEl, measureEl);
@@ -227,6 +235,8 @@
             const vel = Math.round(64 + 60 * (cents - 6000) / 6000);
             events.push({ timeTicks: startTick, type: 'on', note: cents, vel, tempoBPM: defaultTempoBPM });
             events.push({ timeTicks: endTick, type: 'off', note: cents, vel, tempoBPM: defaultTempoBPM });
+            partEvents.push({ timeTicks: startTick, type: 'on', note: cents, vel, tempoBPM: defaultTempoBPM });
+            partEvents.push({ timeTicks: endTick, type: 'off', note: cents, vel, tempoBPM: defaultTempoBPM });
 
             if (!isChord) cursor += durTicks;
           } else if (tag === 'direction') {
@@ -257,6 +267,10 @@
           }
         }
       }
+      // Push this part's events so analyzeMusicXml can build a
+      // per-part analysis (one entry per part) and the track picker
+      // can offer Violin 1 / Violin 2 / Viola / Cello etc.
+      eventsByPart.push(partEvents);
     }
 
     // Sort events by timeTicks so playback can interleave correctly.
@@ -290,7 +304,7 @@
       ev.tempoBPM = activeBpm;
     }
 
-    return { events, ticksPerQuarter, parts, measures };
+    return { events, eventsByPart, ticksPerQuarter, parts, measures };
   }
 
   // Compute the absolute tick time at the start of a measure. We do this by
@@ -329,15 +343,50 @@
     return tick;
   }
 
-  // ---------------------------------------------------------------------------
+  // -----------------------------------------------------------------------
   // Convenience: analyzeMusicXml(xmlText) — same shape as analyzeMidi.
-  // ---------------------------------------------------------------------------
+  //
+  // Returns the SAME fields as analyzeMidi: graph, stats, events,
+  // ticksPerQuarter, parts, measures, trackAnalyses, autoMelodic,
+  // chordWindows, chordGraph, monophonic. The trackAnalyses are one
+  // entry per part (Violin 1, Violin 2, etc. for a quartet), enabling
+  // the melodic track picker. chordWindows come from the merged event
+  // stream so the harmonic graph works for both file types.
+  // -----------------------------------------------------------------------
   function analyzeMusicXml(xmlText) {
-    const { events, ticksPerQuarter, parts, measures } = parseMusicXml(xmlText);
+    const { events, eventsByPart, ticksPerQuarter, parts, measures } = parseMusicXml(xmlText);
     const notes = M.notesFromEvents(events);
     const graph = M.buildTransitionGraph(notes);
     const stats = M.computeStats(notes, graph);
-    return { graph, stats, events, ticksPerQuarter, parts, measures };
+    // Per-part analyses (drives the melodic track picker). Each
+    // part's events get a separate transition graph + stats; empty
+    // parts are skipped by buildTrackAnalyses.
+    const trackAnalyses = M.buildTrackAnalyses
+      ? M.buildTrackAnalyses(eventsByPart)
+      : [];
+    // Rename the labels from "Track N" to the actual part name
+    // (Violin 1, Viola, Cello, etc.) so the dropdown is readable.
+    for (let i = 0; i < trackAnalyses.length; i++) {
+      const ta = trackAnalyses[i];
+      const part = parts[i];
+      if (part && part.name) ta.userLabel = part.name;
+    }
+    const autoMelodic = M.pickMelodicTrack
+      ? M.pickMelodicTrack(trackAnalyses)
+      : null;
+    // Chord analysis on the merged event stream (so all parts are
+    // heard together — the harmonic graph shows the actual chord
+    // sounding at each moment, not the per-voice melody).
+    const chordWindows = M.chordSequence(events, { ticksPerQuarter });
+    const chordGraph = M.buildChordTransitionGraph(chordWindows);
+    const monophonic = M.isMonophonicSequence
+      ? M.isMonophonicSequence(chordWindows)
+      : false;
+    return {
+      graph, stats, events, ticksPerQuarter, parts, measures,
+      trackAnalyses, autoMelodic,
+      chordWindows, chordGraph, monophonic,
+    };
   }
 
   // buildSyntheticMusicXml(eventsOrResult, ticksPerQuarter?) → MusicXML 3.1 string
