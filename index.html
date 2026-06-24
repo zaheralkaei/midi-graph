@@ -146,12 +146,27 @@
   </div>
 
   <!-- General audio / summary panel — at-a-glance info about the loaded
-       file and audio. Hidden until something is loaded. -->
+       file and audio. Hidden until something is loaded. The two columns
+       mirror the layout of the graphs above: melodic stats + pitch
+       transitions on the left, harmonic stats + chord transitions on the
+       right. Each column is independently scrollable so neither pushes
+       the other out of view on small screens. -->
   <div class="panel hidden" id="stats-panel">
     <h2>Summary</h2>
-    <div class="stats-grid" id="stats-grid"></div>
-    <h2 style="margin-top: 14px;">All transitions <span style="font-size: 11px; color: var(--muted); font-weight: 400;">(sorted by probability)</span></h2>
-    <div class="top-transitions" id="top-transitions"></div>
+    <div class="summary-row">
+      <div class="summary-col">
+        <h3>Melodic</h3>
+        <div class="stats-grid" id="stats-grid"></div>
+        <h3 class="summary-list-title">All pitch transitions <span class="summary-sub">(sorted by probability)</span></h3>
+        <div class="top-transitions" id="top-transitions"></div>
+      </div>
+      <div class="summary-col">
+        <h3>Harmonic</h3>
+        <div class="stats-grid" id="harmonic-stats-grid"></div>
+        <h3 class="summary-list-title">All chord transitions <span class="summary-sub">(sorted by probability)</span></h3>
+        <div class="top-transitions" id="harmonic-top-transitions"></div>
+      </div>
+    </div>
   </div>
 </div>
 

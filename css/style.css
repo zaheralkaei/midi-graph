@@ -259,10 +259,57 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   .graphs-row .chord-sequence-panel { display: block; }
 }
 
+/* Summary panel: two columns side by side, mirroring the graphs
+   row above. Each column is a vertical flex so the stats grid and
+   the transition list scroll independently inside the column if
+   they overflow. Stacks to a single column below 1100px (matches
+   the graphs-row breakpoint). */
+.summary-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.summary-col {
+  min-width: 0;        /* let the column shrink below its content */
+  display: flex;
+  flex-direction: column;
+}
+.summary-col h3 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.summary-col .summary-list-title { margin-top: 14px; }
+.summary-col .summary-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.summary-col .top-transitions {
+  max-height: 240px;
+  overflow-y: auto;
+}
+@media (max-width: 1100px) {
+  .summary-row { grid-template-columns: 1fr; }
+}
+
 /* The settings bar can sit above the graph (preferred for the new
    side-by-side layout) or below it (kept for backwards compat with
-   any saved styles). */
-.graph-controls-top { margin-top: 0; margin-bottom: 10px; }
+   any saved styles). The min-height matches the tallest bar
+   (melodic has 3 range sliders that wrap to a second line) so both
+   panels' graphs start at the same vertical position — otherwise
+   the side-by-side layout looks misaligned because one controls
+   bar is taller than the other and the graph below is offset. */
+.graph-controls-top {
+  margin-top: 0;
+  margin-bottom: 10px;
+  min-height: 140px;
+}
 .harmonic-notice {
   background: rgba(255, 230, 100, 0.08);
   border: 1px solid rgba(255, 230, 100, 0.3);

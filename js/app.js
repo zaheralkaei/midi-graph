@@ -46,6 +46,8 @@
   const sheetPanel = document.getElementById('sheet-panel');
   const statsGrid = document.getElementById('stats-grid');
   const topTransitionsEl = document.getElementById('top-transitions');
+  const harmonicStatsGrid = document.getElementById('harmonic-stats-grid');
+  const harmonicTopTransitionsEl = document.getElementById('harmonic-top-transitions');
   const sheetContainer = document.getElementById('sheet-container');
   const playBtn = document.getElementById('play-btn');
   const stopBtn = document.getElementById('stop-btn');
@@ -58,12 +60,15 @@
                                    // can re-render the graph when the user
                                    // picks a different track.
   let currentMelodicIndex = 0;     // INDEX into trackAnalyses (NOT a
-                                   // trackIndex — they're different because
-                                   // some MIDI files have silent/meta-only
-                                   // tracks at the start that get filtered
-                                   // out). The select value is the
-                                   // trackIndex; the array lookup uses the
-                                   // array position.
+                                  // trackIndex — they're different because
+                                  // some MIDI files have silent/meta-only
+                                  // tracks at the start that get filtered
+                                  // out). The select value is the array
+                                  // index, not the MIDI track number.
+  let currentMelodicStats = null;  // Cached melodic stats so
+                                  // renderHarmonicView can re-render the
+                                  // Summary panel when the user changes
+                                  // the harmonic window size.
   let currentChordWindows = null;  // Phase 3: cached chord windows used to
                                    // re-run the classifier with a different
                                    // windowTicks when the user changes the
@@ -100,6 +105,8 @@
     // (memory pressure on consecutive large loads).
     document.getElementById('stats-grid').innerHTML = '';
     document.getElementById('top-transitions').innerHTML = '';
+    document.getElementById('harmonic-stats-grid').innerHTML = '';
+    document.getElementById('harmonic-top-transitions').innerHTML = '';
     const chordSeq = document.getElementById('chord-sequence-list');
     if (chordSeq) chordSeq.innerHTML = '';
     playBtn.disabled = true;
@@ -107,32 +114,68 @@
     isPlaying = false;
   }
 
-  function renderStats(stats) {
-    statsGrid.innerHTML = '';
-    const cells = [
-      { label: 'Total notes', value: stats.note_count, sub: `${stats.unique_note_count} unique pitches` },
-      { label: 'Transitions', value: stats.transition_count, sub: 'note → next-note pairs' },
-      { label: 'Self-loops', value: stats.self_loop_count, sub: `${(stats.self_loop_share * 100).toFixed(1)}% of all transitions` },
-      { label: 'Pitch range', value: stats.pitch_range, sub: '' },
-    ];
+  function renderStatsGrid(gridEl, cells) {
+    gridEl.innerHTML = '';
     for (const c of cells) {
       const el = document.createElement('div');
       el.className = 'stat';
       el.innerHTML = `
         <div class="label">${c.label}</div>
-        <div class="value"${c.label === 'Pitch range' ? ' style="font-size: 15px;"' : ''}>${c.value}</div>
+        <div class="value"${c.label === 'Pitch range' || c.label === 'Chord range' ? ' style="font-size: 15px;"' : ''}>${c.value}</div>
         ${c.sub ? `<div class="sub">${c.sub}</div>` : ''}
       `;
-      statsGrid.appendChild(el);
+      gridEl.appendChild(el);
     }
-    // ALL transitions, sorted by probability descending. 193 transitions on
-    // one line would be unreadable; render as a vertical scrollable list
-    // capped at ~12 visible rows (CSS scrolls the rest).
-    topTransitionsEl.innerHTML = '<ol class="transition-list">' +
-      stats.all_transitions
+  }
+
+  function renderTransitionsList(el, transitions) {
+    el.innerHTML = '<ol class="transition-list">' +
+      transitions
         .map(t => `<li><code>${t.from} → ${t.to}</code><span class="pct">${(t.probability * 100).toFixed(1)}%</span></li>`)
         .join('') +
       '</ol>';
+  }
+
+  function renderStats(stats, chordGraph) {
+    // Melodic stats: note count, transitions, self-loops, pitch range.
+    renderStatsGrid(statsGrid, [
+      { label: 'Total notes', value: stats.note_count, sub: `${stats.unique_note_count} unique pitches` },
+      { label: 'Transitions', value: stats.transition_count, sub: 'note → next-note pairs' },
+      { label: 'Self-loops', value: stats.self_loop_count, sub: `${(stats.self_loop_share * 100).toFixed(1)}% of all transitions` },
+      { label: 'Pitch range', value: stats.pitch_range, sub: '' },
+    ]);
+    renderTransitionsList(topTransitionsEl, stats.all_transitions);
+
+    // Harmonic stats: chord count, transitions, self-loops, "chord range"
+    // (the unique chord labels sorted alphabetically). chordGraph comes
+    // from buildChordTransitionGraph and has the same shape as the
+    // melodic graph (nodes with count + frequency, links with count +
+    // value). For monophonic files there are no chords to summarize —
+    // in that case render the harmonic column with a placeholder.
+    if (chordGraph && chordGraph.nodes && chordGraph.nodes.length > 0) {
+      const nodeCount = chordGraph.nodes.length;
+      const linkCount = chordGraph.links.length;
+      const totalTransitions = chordGraph.links.reduce((s, l) => s + l.count, 0);
+      // "Chord range" = the alphabetically-extreme chord labels in the
+      // progression, e.g. "A minor → G7". This mirrors the melodic
+      // pitch range but operates on chord labels.
+      const sorted = chordGraph.nodes.map(n => n.id).sort();
+      const chordRange = sorted.length <= 2
+        ? sorted.join(' → ')
+        : `${sorted[0]} … ${sorted[sorted.length - 1]}`;
+      renderStatsGrid(harmonicStatsGrid, [
+        { label: 'Unique chords', value: nodeCount, sub: `${chordGraph.links.reduce((s, l) => s + l.value, 0).toFixed(2)} avg transition prob.` },
+        { label: 'Transitions', value: linkCount, sub: `${totalTransitions} total chord → chord pairs` },
+        { label: 'Self-loops', value: chordGraph.links.filter(l => l.source === l.target).length, sub: 'chord repeats next time' },
+        { label: 'Chord range', value: chordRange, sub: '' },
+      ]);
+      renderTransitionsList(harmonicTopTransitionsEl, chordGraph.links.map(l => ({
+        from: l.source, to: l.target, probability: l.value,
+      })));
+    } else if (harmonicStatsGrid) {
+      harmonicStatsGrid.innerHTML = '<div class="stat"><div class="sub" style="font-size: 13px;">No chord data — this file appears to be monophonic.</div></div>';
+      harmonicTopTransitionsEl.innerHTML = '';
+    }
     statsPanel.classList.remove('hidden');
   }
 
@@ -322,23 +365,20 @@
     // with the old, smaller window's time base).
     currentResult.chordWindows = currentChordWindows;
     const chordGraph = M.buildChordTransitionGraph(currentChordWindows);
+    // Also store the chord graph so the Summary panel can re-render
+    // its harmonic column when the window size changes.
+    currentResult.chordGraph = chordGraph;
     // Destroy any previous harmonic controller so we don't leak D3 listeners.
     if (currentHarmonicController) {
       currentHarmonicController.destroy();
       currentHarmonicController = null;
     }
     const harmonicContainer = document.getElementById('harmonic-graph');
-    try {
-      console.log('[DBG] calling M.render with controlPrefix=harmonic-');
-      currentHarmonicController = M.render(harmonicContainer, chordGraph, {
-        mode: 'chord',
-        zoomButtonPrefix: 'harmonic-',
-        controlPrefix: 'harmonic-',
-      });
-      console.log('[DBG] M.render returned', !!currentHarmonicController);
-    } catch(e) {
-      console.error('[DBG] M.render failed:', e);
-    }
+    currentHarmonicController = M.render(harmonicContainer, chordGraph, {
+      mode: 'chord',
+      zoomButtonPrefix: 'harmonic-',
+      controlPrefix: 'harmonic-',
+    });
     // Source label: how many windows, how many unique chords.
     const sourceLabel = document.getElementById('harmonic-source-label');
     if (sourceLabel) {
@@ -347,6 +387,11 @@
     }
     // Chord sequence list (collapsed adjacent duplicates, silence skipped).
     renderChordSequenceList(currentChordWindows);
+    // Re-render the Summary panel's harmonic column so the stats
+    // grid + chord transitions list reflect the new window size.
+    if (typeof renderStats === 'function' && currentMelodicStats) {
+      renderStats(currentMelodicStats, chordGraph);
+    }
     // Wire the harmonic controls (window select + sliders + zoom).
     wireHarmonicControls();
   }
@@ -501,7 +546,14 @@
     sourceLabel.textContent = labelText;
     const graphContainer = document.getElementById('graph');
     currentGraphController = M.render(graphContainer, graph);
-    renderStats(stats);
+    // Save the melodic stats so renderHarmonicView can re-render
+    // the Summary panel when the window size changes.
+    currentMelodicStats = stats;
+    // Pass the chord transition graph so the Summary panel can
+    // populate the harmonic column. For monophonic files
+    // chordGraph may be empty; renderStats handles that case
+    // by showing a placeholder in the harmonic column.
+    renderStats(stats, currentResult.chordGraph);
   }
 
   // Detect file type by inspecting the actual content (not the extension).
