@@ -328,10 +328,17 @@
       currentHarmonicController = null;
     }
     const harmonicContainer = document.getElementById('harmonic-graph');
-    currentHarmonicController = M.render(harmonicContainer, chordGraph, {
-      mode: 'chord',
-      zoomButtonPrefix: 'harmonic-',
-    });
+    try {
+      console.log('[DBG] calling M.render with controlPrefix=harmonic-');
+      currentHarmonicController = M.render(harmonicContainer, chordGraph, {
+        mode: 'chord',
+        zoomButtonPrefix: 'harmonic-',
+        controlPrefix: 'harmonic-',
+      });
+      console.log('[DBG] M.render returned', !!currentHarmonicController);
+    } catch(e) {
+      console.error('[DBG] M.render failed:', e);
+    }
     // Source label: how many windows, how many unique chords.
     const sourceLabel = document.getElementById('harmonic-source-label');
     if (sourceLabel) {

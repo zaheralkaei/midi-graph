@@ -233,10 +233,15 @@
             // Crude velocity variation based on pitch — normalize against
             // cents (C4 = 6000), not MIDI. 100 cents = 1 semitone.
             const vel = Math.round(64 + 60 * (cents - 6000) / 6000);
-            events.push({ timeTicks: startTick, type: 'on', note: cents, vel, tempoBPM: defaultTempoBPM });
-            events.push({ timeTicks: endTick, type: 'off', note: cents, vel, tempoBPM: defaultTempoBPM });
-            partEvents.push({ timeTicks: startTick, type: 'on', note: cents, vel, tempoBPM: defaultTempoBPM });
-            partEvents.push({ timeTicks: endTick, type: 'off', note: cents, vel, tempoBPM: defaultTempoBPM });
+            // tag events with the part index so the melodic graph can
+            // do track-aware glow (only the selected voice's notes
+            // light up). parseMidi already does this for MIDI files
+            // by tagging events with the source track; we mirror the
+            // contract here for MusicXML parts.
+            events.push({ timeTicks: startTick, type: 'on', note: cents, vel, tempoBPM: defaultTempoBPM, track: partIdx });
+            events.push({ timeTicks: endTick, type: 'off', note: cents, vel, tempoBPM: defaultTempoBPM, track: partIdx });
+            partEvents.push({ timeTicks: startTick, type: 'on', note: cents, vel, tempoBPM: defaultTempoBPM, track: partIdx });
+            partEvents.push({ timeTicks: endTick, type: 'off', note: cents, vel, tempoBPM: defaultTempoBPM, track: partIdx });
 
             if (!isChord) cursor += durTicks;
           } else if (tag === 'direction') {

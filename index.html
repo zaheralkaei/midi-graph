@@ -119,10 +119,10 @@
         <button class="secondary" id="harmonic-zoom-in">Zoom in</button>
         <button class="secondary" id="harmonic-zoom-out">Zoom out</button>
         <button class="secondary" id="harmonic-reset-zoom">Reset</button>
-        <label>Min probability
-          <input type="range" id="harmonic-min-prob" min="0" max="100" value="0">
-          <span id="harmonic-min-prob-val">0%</span>
-        </label>
+        <label><input type="checkbox" id="harmonic-color-by-pitch-class" checked> Color by quality</label>
+        <label><input type="checkbox" id="harmonic-edge-thickness-by-prob" checked> Edge thickness by probability</label>
+        <label><input type="checkbox" id="harmonic-drag-pin-mode"> Pin dragged nodes (off = graph rearranges)</label>
+        <label>Min probability <input type="range" id="harmonic-min-prob" min="0" max="100" value="0"> <span id="harmonic-min-prob-val">0%</span></label>
       </div>
       <div class="graph-wrap">
         <div id="harmonic-graph"></div>

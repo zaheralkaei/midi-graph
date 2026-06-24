@@ -188,19 +188,39 @@
       // below). Used for label positioning (offset to the right of node),
       // arrow tip clearance, and the collide force.
       const NODE_R = 18;
-      const minProb = +document.getElementById('min-prob').value / 100;
-      const minPitch = +document.getElementById('min-pitch').value;
-      const maxPitch = +document.getElementById('max-pitch').value;
+      // Control IDs are scoped per-graph. The melodic graph reads
+      // `#min-prob`, `#color-by-pitch-class`, etc.; the harmonic
+      // graph reads `#harmonic-min-prob`, `#harmonic-color-by-quality`,
+      // etc. The caller passes `options.controlPrefix` so each
+      // render() instance binds to its own panel's controls. The
+      // default prefix '' keeps the existing melodic behavior.
+      const ctl = options.controlPrefix || '';
+      const minProb = +document.getElementById(ctl + 'min-prob').value / 100;
+      // Pitch-range sliders only exist on the melodic panel
+      // (#min-pitch / #max-pitch). The harmonic panel doesn't have
+      // them, so we skip the cents-based filter in chord mode.
+      const minPitch = ctl ? null : +document.getElementById('min-pitch').value;
+      const maxPitch = ctl ? null : +document.getElementById('max-pitch').value;
 
       const filtered = workingLinks.filter(l => {
         if (isChord) {
-          // No cents-based filtering for chord mode — the source/target
-          // IDs are chord-label strings, not pitch cents.
+          // Chord mode: only the probability filter applies. There's
+          // no pitch-based filter because chord IDs are strings
+          // (e.g. "C", "F/A", "Am7b5"), not cents.
           return l.value >= minProb;
         }
+        // Pitch mode: probability + cents range. minPitch/maxPitch
+        // are null when ctl is non-empty (harmonic panel), so the
+        // sp >= null / sp <= null checks are false for any number
+        // and the filter becomes a no-op (correct — harmonic shouldn't
+        // have a pitch filter).
         const sp = pitchOf(l.source);
         const tp = pitchOf(l.target);
-        return l.value >= minProb && sp >= minPitch && sp <= maxPitch && tp >= minPitch && tp <= maxPitch;
+        return l.value >= minProb
+          && (minPitch === null || sp >= minPitch)
+          && (maxPitch === null || sp <= maxPitch)
+          && (minPitch === null || tp >= minPitch)
+          && (maxPitch === null || tp <= maxPitch);
       });
 
       const presentNodeIds = new Set();
@@ -256,16 +276,22 @@
           .on('drag',  (e, d) => { d.fx = e.x; d.fy = e.y; })
           .on('end',   (e, d) => {
             if (!e.active) simulation.alphaTarget(0);
-            const pin = document.getElementById('drag-pin-mode').checked;
+            const pin = document.getElementById(ctl + 'drag-pin-mode').checked;
             if (!pin) { d.fx = null; d.fy = null; }
             // In PIN mode, leave d.fx/d.fy set so the node stays where the
             // user dropped it. The simulation still settles other nodes around it.
           }));
 
-      const colorByClass = document.getElementById('color-by-pitch-class').checked;
+      // Color checkbox. Melodic uses `color-by-pitch-class` (default
+      // cyan vs pitch-class palette); harmonic uses the same ID
+      // but the label says "Color by quality" because the palette
+      // is `chordColor` (per-quality) instead of `pitchClassColor`
+      // (per-pitch-class). When the box is UNCHECKED, both modes
+      // fall back to the default accent color.
+      const colorByClass = document.getElementById(ctl + 'color-by-pitch-class').checked;
       nodeAll
         .attr('fill', d => {
-          if (isChord) return chordColor(d.id);
+          if (isChord) return colorByClass ? chordColor(d.id) : '#00e5ff';
           return colorByClass ? pitchClassColor(M.pitchClass(pitchOf(d.id))) : '#00e5ff';
         })
         .attr('class', d => {
@@ -368,7 +394,7 @@
       simulation.alpha(0.9).restart();
 
       simulation.on('tick', () => {
-        const thicknessOn = document.getElementById('edge-thickness-by-prob').checked;
+        const thicknessOn = document.getElementById(ctl + 'edge-thickness-by-prob').checked;
         const { w, h } = getSize();
         simulation.force('center').x(w / 2).y(h / 2);
         // Shrink edges by this much past the node circumference so the arrow
@@ -468,27 +494,38 @@
 
     rebuild();
 
-    // Filter control listeners.
-    const probInput = document.getElementById('min-prob');
-    const minPitchInput = document.getElementById('min-pitch');
-    const maxPitchInput = document.getElementById('max-pitch');
-    const colorToggle = document.getElementById('color-by-pitch-class');
-    const thicknessToggle = document.getElementById('edge-thickness-by-prob');
+    // Filter control listeners. The ctl prefix is computed locally
+    // (it was defined inside rebuild() too — rebuild() and this
+    // function are sibling closures over the render() arguments).
+    const ctl2 = options.controlPrefix || '';
+    const probInput = document.getElementById(ctl2 + 'min-prob');
+    const minPitchInput = ctl2 ? null : document.getElementById('min-pitch');
+    const maxPitchInput = ctl2 ? null : document.getElementById('max-pitch');
+    const colorToggle = document.getElementById(ctl2 + 'color-by-pitch-class');
+    const thicknessToggle = document.getElementById(ctl2 + 'edge-thickness-by-prob');
+    const dragPinToggle = document.getElementById(ctl2 + 'drag-pin-mode');
 
     probInput.addEventListener('input', e => {
-      document.getElementById('min-prob-val').textContent = e.target.value + '%';
+      document.getElementById(ctl2 + 'min-prob-val').textContent = e.target.value + '%';
       rebuild();
     });
-    minPitchInput.addEventListener('input', e => {
-      document.getElementById('min-pitch-val').textContent = M.centsToPitch(+e.target.value);
-      rebuild();
-    });
-    maxPitchInput.addEventListener('input', e => {
-      document.getElementById('max-pitch-val').textContent = M.centsToPitch(+e.target.value);
-      rebuild();
-    });
-    colorToggle.addEventListener('change', rebuild);
-    thicknessToggle.addEventListener('change', rebuild);
+    if (minPitchInput) {
+      minPitchInput.addEventListener('input', e => {
+        document.getElementById('min-pitch-val').textContent = M.centsToPitch(+e.target.value);
+        rebuild();
+      });
+    }
+    if (maxPitchInput) {
+      maxPitchInput.addEventListener('input', e => {
+        document.getElementById('max-pitch-val').textContent = M.centsToPitch(+e.target.value);
+        rebuild();
+      });
+    }
+    if (colorToggle) colorToggle.addEventListener('change', rebuild);
+    if (thicknessToggle) thicknessToggle.addEventListener('change', rebuild);
+    // drag-pin-mode doesn't trigger a rebuild on change — the toggle
+    // is read at drag-end time (see the drag handler above), so
+    // there's nothing to listen for here.
 
     // Zoom buttons — by default hard-coded to #zoom-in / #zoom-out /
     // #reset-zoom (the pitch-mode panel). For chord mode the caller
