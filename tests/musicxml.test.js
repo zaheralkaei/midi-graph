@@ -530,6 +530,53 @@ test('parseMusicXml: <divisions>0 falls back to default (no Infinity in playback
     `secondsPerTick should be finite, got ${secondsPerTick}`);
 });
 
+test('chordSequence: low-tpq file (MuseScore export) is not empty', () => {
+  // Regression: the harmonic graph was empty for MusicXML files exported
+  // by MuseScore because they use <divisions>2 (ticksPerQuarter=2) instead
+  // of MIDI's standard 480. The app's dropdown was hardcoded to 480 ticks
+  // for "Quarter note", so for a tpq=2 file the window became 240 quarters
+  // — far longer than the file, producing 0 or 1 chord windows.
+  //
+  // The fix: the dropdown now stores quarter-note UNITS (0.5, 1, 2) and
+  // app.js multiplies by ticksPerQuarter to get the actual window. With
+  // windowTicks=2 (= 1 quarter for a tpq=2 file), a 5-measure piece
+  // produces 20 chord windows. We assert that the windowTicks computed
+  // by the same formula app.js uses is correct.
+  const xmlText = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    ${Array.from({length: 5}, (_, i) => `
+    <measure number="${i + 1}">
+      <attributes><divisions>2</divisions></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration><type>quarter</type></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><type>quarter</type></note>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>2</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>2</duration><type>quarter</type></note>
+    </measure>`).join('')}
+  </part>
+</score-partwise>`;
+  const r = xml.analyzeMusicXml(xmlText);
+  // MuseScore-style low-tpq file: 5 measures × 4 quarter notes each
+  // at tpq=2 = 40 ticks total.
+  assertEqual(r.ticksPerQuarter, 2, 'MuseScore default divisions=2');
+  // The app's formula: windowTicks = quarters * ticksPerQuarter
+  // where quarters comes from the dropdown. For "Quarter note" (value=1):
+  const quarters = 1;
+  const tpq = r.ticksPerQuarter;
+  const windowTicks = Math.max(1, Math.round(quarters * tpq));
+  assertEqual(windowTicks, 2, 'windowTicks should be 2 ticks (= 1 quarter at tpq=2)');
+  // Re-running chordSequence with the correct windowTicks should produce
+  // 20 windows for this 5-measure file (5 × 4 quarters).
+  const windows = M.chordSequence(r.events, { ticksPerQuarter: tpq, windowTicks });
+  assertEqual(windows.length, 20, `expected 20 chord windows, got ${windows.length}`);
+  // And each window should detect a C major chord (C+E+G with C in
+  // bass = "C", or all four notes C+E+G+C = still "C").
+  for (const w of windows) {
+    assert(w.label && w.label !== '(silence)', `window should be non-silence, got "${w.label}"`);
+  }
+});
+
 console.log('-----------------');
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

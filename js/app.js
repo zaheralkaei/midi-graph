@@ -360,11 +360,19 @@
     harmonicPanel.querySelector('.graph-wrap').style.display = '';
     harmonicPanel.querySelector('.chord-sequence-panel').style.display = '';
     if (harmonicNotice) harmonicNotice.hidden = true;
-    // Compute chord windows with the current window size.
+    // Compute chord windows with the current window size. The dropdown
+    // value is in QUARTER-NOTE UNITS (0.5, 1, 2), so multiply by the
+    // file's ticksPerQuarter to get the actual window in ticks. This
+    // keeps the chord detection correct for files with any ticksPerQuarter
+    // (MIDI: 480, MuseScore MusicXML export: 2, Finale: 1024, etc.).
+    // The previous hardcoded windowTicks=480 broke MusicXML files where
+    // the file was much smaller than 480 ticks in length.
     const windowSelect = document.getElementById('harmonic-window');
-    const windowTicks = windowSelect ? parseInt(windowSelect.value, 10) : 480;
+    const quarters = windowSelect ? parseFloat(windowSelect.value) : 1;
+    const tpq = currentResult.ticksPerQuarter || 480;
+    const windowTicks = Math.max(1, Math.round(quarters * tpq));
     currentChordWindows = M.chordSequence(currentResult.events, {
-      ticksPerQuarter: currentResult.ticksPerQuarter,
+      ticksPerQuarter: tpq,
       windowTicks,
     });
     // Phase 3 fix: scheduleChordGlow reads from currentResult.chordWindows,

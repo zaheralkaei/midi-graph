@@ -110,9 +110,13 @@
         <label>
           Window:
           <select id="harmonic-window">
-            <option value="240">Eighth note</option>
-            <option value="480" selected>Quarter note</option>
-            <option value="960">Half note</option>
+            <!-- Values are in QUARTER-NOTE UNITS, not raw ticks, so the
+                 window is correct regardless of the file's ticksPerQuarter
+                 (MIDI: 480, MuseScore export: 2, Finale: 1024, etc.).
+                 The actual window in ticks = value * ticksPerQuarter. -->
+            <option value="0.5">Eighth note</option>
+            <option value="1" selected>Quarter note</option>
+            <option value="2">Half note</option>
           </select>
         </label>
         <button class="secondary" id="harmonic-zoom-in">Zoom in</button>
