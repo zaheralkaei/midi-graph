@@ -51,6 +51,34 @@ we want.
 
 ## What you get
 
+The page is laid out in a single column with the **melodic** and
+**harmonic** graphs side-by-side in their own row. From top to
+bottom:
+
+1. **Title** — centered, with a subtitle left-aligned beneath.
+2. **Upload** — file picker, two demo loaders (Bach Allemande `.mid`
+   and ya-tyra `.mxl`), and the loaded-filename display. Always
+   visible so you can swap files without scrolling.
+3. **Playback** — Play / Stop buttons and a status line. Disabled
+   until a file is loaded.
+4. **Side-by-side graphs** — *Melodic graph* (left) and *Harmonic
+   graph* (right) in a two-column row. Each panel has its settings
+   bar **above** the graph: track picker + zoom controls + display
+   options (color by pitch class, edge thickness, drag-pin mode,
+   probability / pitch range filters). On viewports narrower than
+   1100 px the two columns stack vertically so each graph stays
+   legible.
+5. **Sheet music** — real notation. MusicXML renders directly via
+   OSMD; MIDI imports go through `buildSyntheticMusicXml` in
+   `js/musicxml.js` to get a score (since MIDI carries no notation
+   data), then a webmscore-powered render for professional-grade
+   engraving.
+6. **Summary** — note count, unique pitches, total transitions,
+   self-loop count + share, pitch range, and **every transition
+   sorted by probability** (not just the top 5).
+
+### Melodic graph
+
 - **Graph** — every unique pitch in the file is a node, every observed
   transition is a directed edge. Edge thickness is proportional to
   probability. Self-loops (A→A) get their own arc and a distinct amber

@@ -28,7 +28,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>midi-graph
+  <h1 class="title-centered">midi-graph
     <span class="title-tag">note-transition visualizer · MIDI &amp; MusicXML</span>
     <!-- Info button — opens a modal with a quick orientation for first-time
          users. Concept and implementation by Zaher Alkaei. Keyboard
@@ -51,21 +51,27 @@
     <div id="error-display" class="error-display hidden" role="alert"></div>
   </div>
 
-  <!-- Stats panel — hidden until something is loaded. -->
-  <div class="panel hidden" id="stats-panel">
-    <h2>Summary</h2>
-    <div class="stats-grid" id="stats-grid"></div>
-    <h2 style="margin-top: 14px;">All transitions <span style="font-size: 11px; color: var(--muted); font-weight: 400;">(sorted by probability)</span></h2>
-    <div class="top-transitions" id="top-transitions"></div>
+  <!-- Playback — sits right after the upload so the user can hear the
+       file as soon as it's loaded, before exploring the graphs. -->
+  <div class="panel">
+    <h2>Playback</h2>
+    <div class="playback-row">
+      <button id="play-btn" disabled>▶ Play</button>
+      <button class="danger" id="stop-btn" disabled>■ Stop</button>
+      <span class="info" id="playback-info">Upload a MIDI or MusicXML file first.</span>
+    </div>
   </div>
 
-  <!-- Graph panel — comes first so users see the structure before they
-       play or look at the notation. -->
-  <div class="panel hidden" id="graph-panel">
-    <h2>Transition graph <span id="graph-source-label" class="source-label"></span></h2>
-    <div class="graph-wrap">
-      <div id="graph"></div>
-      <div class="graph-controls">
+  <!-- Side-by-side graphs: melodic (note-to-note transitions) on the left,
+       harmonic (chord-to-chord progressions) on the right. Each panel
+       has its settings bar above the graph so the user sees the controls
+       first, then the visualization. Wraps to a single column on
+       narrow viewports. -->
+  <div class="graphs-row">
+    <!-- Melodic graph -->
+    <div class="panel graph-panel hidden" id="graph-panel">
+      <h2>Melodic graph <span id="graph-source-label" class="source-label"></span></h2>
+      <div class="graph-controls graph-controls-top">
         <label id="track-picker-row" class="track-picker-row hidden">
           Track:
           <select id="track-picker"></select>
@@ -81,27 +87,27 @@
         <label>Min pitch <input type="range" id="min-pitch" min="0" max="10800" step="50" value="0"> <span id="min-pitch-val">C-1</span></label>
         <label>Max pitch <input type="range" id="max-pitch" min="0" max="10800" step="50" value="10800"> <span id="max-pitch-val">C8</span></label>
       </div>
+      <div class="graph-wrap">
+        <div id="graph"></div>
+      </div>
     </div>
-  </div>
 
-  <!-- Harmonic graph panel — second graph showing CHORD progressions
-       rather than note-by-note transitions. Hidden for monophonic files
-       (where every "chord" is a single note) and for MusicXML/MXL
-       (which doesn't go through chordSequence yet). Window size is
-       user-configurable: re-running the chord classifier with a smaller
-       window captures faster harmonic rhythm; a larger window smooths
-       out passing tones. The "Melodic" graph above stays as-is. -->
-  <div class="panel hidden" id="harmonic-panel">
-    <h2>Harmonic graph
-      <span id="harmonic-source-label" class="source-label"></span>
-    </h2>
-    <div class="harmonic-notice" id="harmonic-monophonic-notice" hidden>
-      This file appears to be monophonic — no simultaneous pitches means
-      there are no chords to analyze. The melodic graph above still works.
-    </div>
-    <div class="graph-wrap">
-      <div id="harmonic-graph"></div>
-      <div class="graph-controls">
+    <!-- Harmonic graph — second graph showing CHORD progressions
+         rather than note-by-note transitions. Hidden for monophonic files
+         (where every "chord" is a single note) and for MusicXML/MXL
+         (which doesn't go through chordSequence yet). Window size is
+         user-configurable: re-running the chord classifier with a smaller
+         window captures faster harmonic rhythm; a larger window smooths
+         out passing tones. -->
+    <div class="panel graph-panel hidden" id="harmonic-panel">
+      <h2>Harmonic graph
+        <span id="harmonic-source-label" class="source-label"></span>
+      </h2>
+      <div class="harmonic-notice" id="harmonic-monophonic-notice" hidden>
+        This file appears to be monophonic — no simultaneous pitches means
+        there are no chords to analyze. The melodic graph above still works.
+      </div>
+      <div class="graph-controls graph-controls-top">
         <label>
           Window:
           <select id="harmonic-window">
@@ -118,35 +124,34 @@
           <span id="harmonic-min-prob-val">0%</span>
         </label>
       </div>
-    </div>
-    <div class="chord-sequence-panel" id="chord-sequence-panel">
-      <h3>Chord sequence</h3>
-      <ol class="transition-list" id="chord-sequence-list"></ol>
-    </div>
-  </div>
-
-  <!-- Playback — placed between graph and sheet music so the user can
-       play the graph they just saw, then look at the corresponding
-       notation below. -->
-  <div class="panel">
-    <h2>Playback</h2>
-    <div class="playback-row">
-      <button id="play-btn" disabled>▶ Play</button>
-      <button class="danger" id="stop-btn" disabled>■ Stop</button>
-      <span class="info" id="playback-info">Upload a MIDI or MusicXML file first.</span>
+      <div class="graph-wrap">
+        <div id="harmonic-graph"></div>
+      </div>
+      <div class="chord-sequence-panel" id="chord-sequence-panel">
+        <h3>Chord sequence</h3>
+        <ol class="transition-list" id="chord-sequence-list"></ol>
+      </div>
     </div>
   </div>
 
   <!-- Sheet music panel — shown for both file types. MusicXML renders
        directly; MIDI synthesizes MusicXML from the parsed note_on /
        note_off events (see buildSyntheticMusicXml in js/musicxml.js)
-       since MIDI carries no notation data. Placed last so the natural
-       reading flow is: stats (top summary) -> graph (visual structure)
-       -> play (hear it) -> sheet (notation reference for what was
-       played). -->
+       since MIDI carries no notation data. Placed below the graphs
+       so the natural reading flow is: upload → play → see the
+       structure (melodic + harmonic) → read the notation. -->
   <div class="panel hidden" id="sheet-panel">
     <h2>Sheet music</h2>
     <div id="sheet-container"></div>
+  </div>
+
+  <!-- General audio / summary panel — at-a-glance info about the loaded
+       file and audio. Hidden until something is loaded. -->
+  <div class="panel hidden" id="stats-panel">
+    <h2>Summary</h2>
+    <div class="stats-grid" id="stats-grid"></div>
+    <h2 style="margin-top: 14px;">All transitions <span style="font-size: 11px; color: var(--muted); font-weight: 400;">(sorted by probability)</span></h2>
+    <div class="top-transitions" id="top-transitions"></div>
   </div>
 </div>
 
