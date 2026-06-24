@@ -150,9 +150,17 @@
     // (the unique chord labels sorted alphabetically). chordGraph comes
     // from buildChordTransitionGraph and has the same shape as the
     // melodic graph (nodes with count + frequency, links with count +
-    // value). For monophonic files there are no chords to summarize —
-    // in that case render the harmonic column with a placeholder.
-    if (chordGraph && chordGraph.nodes && chordGraph.nodes.length > 0) {
+    // value). For monophonic files the chord graph only contains
+    // single-pitch "chords" (one pitch per window, no harmonic content
+    // to summarize) — even if nodes exist, render a placeholder so the
+    // Summary matches what the harmonic graph above is showing (which
+    // for monophonic files displays the "monophonic" notice instead of
+    // the graph). Otherwise the two panels disagree and the user sees
+    // chord stats for a file the detector flagged as monophonic.
+    if (currentResult && currentResult.monophonic) {
+      harmonicStatsGrid.innerHTML = '<div class="stat"><div class="sub" style="font-size: 13px;">No chord data — this file appears to be monophonic.</div></div>';
+      harmonicTopTransitionsEl.innerHTML = '';
+    } else if (chordGraph && chordGraph.nodes && chordGraph.nodes.length > 0) {
       const nodeCount = chordGraph.nodes.length;
       const linkCount = chordGraph.links.length;
       const totalTransitions = chordGraph.links.reduce((s, l) => s + l.count, 0);
@@ -172,8 +180,10 @@
       renderTransitionsList(harmonicTopTransitionsEl, chordGraph.links.map(l => ({
         from: l.source, to: l.target, probability: l.value,
       })));
-    } else if (harmonicStatsGrid) {
-      harmonicStatsGrid.innerHTML = '<div class="stat"><div class="sub" style="font-size: 13px;">No chord data — this file appears to be monophonic.</div></div>';
+    } else {
+      // No monophonic flag AND no chord nodes — edge case (e.g. an
+      // empty file that parsed cleanly but had no notes).
+      harmonicStatsGrid.innerHTML = '<div class="stat"><div class="sub" style="font-size: 13px;">No chord data — empty file.</div></div>';
       harmonicTopTransitionsEl.innerHTML = '';
     }
     statsPanel.classList.remove('hidden');

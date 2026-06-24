@@ -183,8 +183,9 @@
 
     <h3>What you get</h3>
     <ul>
-      <li><strong>Transition graph</strong> — each node is a unique pitch, each arrow is a "this note is followed by that note" transition. Arrow width ∝ probability; arrow direction shows flow.</li>
-      <li><strong>Stats panel</strong> — total notes, unique pitches, total transitions, self-loops + share, pitch range, <em>and every transition sorted by probability</em> (not just the top 5).</li>
+      <li><strong>Melodic graph</strong> — each node is a unique pitch, each arrow is a "this note is followed by that note" transition. Arrow width ∝ probability; arrow direction shows flow. For multi-track MIDI, a track picker lets you focus on one voice at a time (only that track's notes glow during playback).</li>
+      <li><strong>Harmonic graph</strong> — slices the piece into fixed-size windows (eighth / quarter / half note) and groups the pitches sounding in each window into a chord. Nodes are chords (24 12-TET templates: triads, 7ths, sus, 6ths, add9, m7b5, 7sus, 7b9, 7#9, etc. + literal-spelling labels for quarter-tones), edges are chord-to-chord transitions. For monophonic files the panel shows a notice instead.</li>
+      <li><strong>Summary</strong> — two columns. Left: total notes, unique pitches, total transitions, self-loops + share, pitch range, <em>and every pitch transition sorted by probability</em> (not just the top 5). Right: unique chords, total chord transitions, self-loops, chord range, <em>and every chord transition sorted by probability</em>. For monophonic files the right column shows a placeholder.</li>
       <li><strong>Sheet music</strong> — real notation. MusicXML renders directly; MIDI files are converted via <a href="https://github.com/LibreScore/webmscore" target="_blank" rel="noopener">webmscore</a> (MuseScore 1.x in WASM) for professional engraving — proper beam grouping, voice separation, slurs, articulations, key and time signatures.</li>
       <li><strong>Playback</strong> — hear the piece with Tone.js. Hover on the graph: notes glow when they sound. Stop works mid-piece, replay works after Stop, and the natural end also resets correctly.</li>
     </ul>

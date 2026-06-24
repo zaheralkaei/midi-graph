@@ -77,9 +77,15 @@ bottom:
    `js/musicxml.js` to get a score (since MIDI carries no notation
    data), then a webmscore-powered render for professional-grade
    engraving.
-6. **Summary** — note count, unique pitches, total transitions,
-   self-loop count + share, pitch range, and **every transition
-   sorted by probability** (not just the top 5).
+6. **Summary** — two columns mirroring the graphs above. **Melodic**
+   column: note count, unique pitches, total transitions, self-loop
+   count + share, pitch range, and **every pitch transition sorted by
+   probability** (not just the top 5). **Harmonic** column: unique
+   chords, total chord transitions, self-loop count, chord range
+   (alphabetically), and every chord transition sorted by probability.
+   For monophonic files the harmonic column shows a placeholder
+   ("No chord data — this file appears to be monophonic.") that
+   matches the notice shown in the harmonic graph panel above.
 
 ### Melodic graph
 
@@ -507,7 +513,7 @@ node tests/harmonic.test.js
 node tests/playback.test.js
 ```
 
-134 tests covering parsing, transitions, stats, multi-tempo timing
+136 tests covering parsing, transitions, stats, multi-tempo timing
 (MIDI + MusicXML), banker's-rounding for eighth-tones, chord
 detection across template / neutral-triad / literal-spelling paths,
 playback schedule timing (wall-clock vs relative seconds — the bug

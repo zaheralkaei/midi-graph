@@ -495,6 +495,38 @@ test('analyzeMusicXml returns the analyzeMidi-compatible shape', () => {
   assertEqual(r.monophonic, false, 'two parts playing together is not monophonic');
 });
 
+test('parseMusicXml: <divisions>0 falls back to default (no Infinity in playback)', () => {
+  // Regression: an earlier version accepted any non-null <divisions>
+  // value, including 0. ticksPerQuarter = 0 then propagated into
+  // ticksToSecondsSegments (secondsPerTick = 1/0 * (60/bpm) = Inf),
+  // making playback play back at infinite speed. The fix rejects
+  // zero / negative divisions and falls back to the default 480.
+  const xmlText = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>0</divisions></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>480</duration><type>quarter</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+  const r = xml.analyzeMusicXml(xmlText);
+  assert(r.ticksPerQuarter > 0, `ticksPerQuarter should be positive (got ${r.ticksPerQuarter})`);
+  // Verify that building a playback controller doesn't blow up. With
+  // the old (buggy) code, ticksPerQuarter = 0 made playback schedule
+  // every note at time = Infinity, which Tone would silently drop.
+  // With the fix, ticksPerQuarter = 480 and the controller builds
+  // cleanly with finite durations.
+  assert(r.events.length === 2, `should have 2 events (1 note on/off), got ${r.events.length}`);
+  // The secondsPerTick formula is (1/tpq) * (60/bpm) — if tpq = 0 we'd
+  // get Infinity. The fix ensures tpq > 0, so this is finite.
+  const tpq = r.ticksPerQuarter;
+  const secondsPerTick = (1 / tpq) * (60 / r.events[0].tempoBPM);
+  assert(Number.isFinite(secondsPerTick),
+    `secondsPerTick should be finite, got ${secondsPerTick}`);
+});
+
 console.log('-----------------');
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

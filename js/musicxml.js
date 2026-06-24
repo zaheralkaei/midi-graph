@@ -164,7 +164,13 @@
         const attrEls = Array.from(measureEl.getElementsByTagName('attributes'));
         for (const a of attrEls) {
           const div = childFloat(a, 'divisions', null);
-          if (div != null) ticksPerQuarter = div;
+          // Reject zero / negative / NaN divisions — they cause
+          // division-by-zero in ticksToSeconds (secondsPerTick = Inf)
+          // which makes playback run at infinite speed. Fall back to
+          // the default (480) in that case. Real MusicXML files from
+          // MuseScore, Finale, Sibelius, etc. always use positive
+          // integer divisions; this guard is purely defensive.
+          if (div != null && div > 0) ticksPerQuarter = div;
         }
 
         measures.push({ number: measureNumber, startTick: measureStartTick, partId: partEl.getAttribute('id') });
