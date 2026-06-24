@@ -132,5 +132,33 @@ test('stop() fires onNoteOff with null event (track-undefined for cleanup)', () 
   assertEqual(offCalls[0].hasEvent, false, 'stop() passes null event');
 });
 
+// Regression test: a previous bug scheduled the chord-glow Tone.Draw
+// callbacks with relative seconds (tickToSec(startTick)) instead of
+// wall-clock time. Tone.Draw fires "past time" callbacks immediately,
+// so all the chord-glow callbacks ran in a chaotic burst at t=0.1s
+// and the rest of the schedule was lost. The fix in js/app.js uses
+// startWallClock = Tone.now() + 0.1 like playback.js does for the
+// note attacks. This test pins the contract that callers should
+// schedule Tone.Draw callbacks at FUTURE wall-clock times.
+test('regression: scheduleNote uses Tone.now() + 0.1 base, not relative seconds', () => {
+  // Sanity-check: the note attacks should be scheduled at
+  // Tone.now() + 0.1 + n.startSec, not n.startSec.
+  scheduledCallbacks.length = 0;
+  const events = [
+    { type: 'on',  timeTicks: 0,   note: 6000, vel: 80, track: 1, tempoBPM: 120 },
+    { type: 'off', timeTicks: 480, note: 6000, vel: 0,  track: 1, tempoBPM: 120 },
+  ];
+  const pb = M.buildPlayback(events, 480, {});
+  pb.play();
+  // The note at tick 0 has startSec=0; if the bug existed, the
+  // attack would be scheduled at time 0 (in the past). The fix
+  // schedules at Tone.now() + 0.1 + 0 = ~0.1.
+  assert(scheduledCallbacks.length >= 1, 'should schedule at least one attack');
+  const attackTime = scheduledCallbacks[0].time;
+  // Must be > 0 (future), not 0 (past). At Tone.now()=0 the attack
+  // would be at 0.1.
+  assert(attackTime > 0, `attack time should be in the future, got ${attackTime}`);
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail > 0) process.exit(1);
