@@ -88,20 +88,25 @@
   function pitchOf(id) {
     if (id == null) return 6000;
     // Match the display forms produced by centsToPitch / centsToStepAlterOctave:
-    //   short form:   "C↑4", "C#4", "E half-flat 4"
+    //   short form:   "C↑4", "C#4", "E half-flat4"
     //   legacy form:  "D#↑4" (still accepted for backward compat)
     // Three matching groups: letter (with optional sharp), alteration
-    // (either `↑`, `half-sharp `, `half-flat `, or empty), octave.
-    const m = id.match(/^([A-G][#]?)(?:\u2191| half-sharp | half-flat )?(-?\d+)$/);
+    // (either `↑`, `half-sharp`, `half-flat`, or empty), octave.
+    // The trailing space after `half-flat ` / `half-sharp ` is OPTIONAL
+    // — centsToPitch historically produced both with and without the
+    // space (the README documents "E half-flat 4" with space, but the
+    // live code emits "E half-flat4" without). Make the regex tolerant
+    // of either to avoid silent glow failures for quarter-tone notes.
+    const m = id.match(/^([A-G][#]?)(?:\u2191| half-sharp ?| half-flat ?)?(-?\d+)$/);
     if (!m) return 6000;
     const pc = SHARP_SCALE_NAMES.indexOf(m[1]);
     if (pc < 0) return 6000;
     const octave = parseInt(m[2], 10);
     // Determine alteration:
-    //   legacy `↑` suffix (old display)           → +50
-    //   `half-sharp ` (new display, no flat equiv) → +50
-    //   `half-flat `                              → -50
-    //   neither                                    →   0
+    //   legacy `↑` suffix (old display)        → +50
+    //   `half-sharp` (with or without space)  → +50
+    //   `half-flat` (with or without space)   → -50
+    //   neither                               →   0
     let centsInOctave = pc * 100;
     if (id.indexOf('half-flat') >= 0) centsInOctave -= 50;
     else if (id.indexOf('\u2191') >= 0 || id.indexOf('half-sharp') >= 0) centsInOctave += 50;

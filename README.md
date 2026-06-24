@@ -518,7 +518,7 @@ node tests/harmonic.test.js
 node tests/playback.test.js
 ```
 
-136 tests covering parsing, transitions, stats, multi-tempo timing
+140 tests covering parsing, transitions, stats, multi-tempo timing
 (MIDI + MusicXML), banker's-rounding for eighth-tones, chord
 detection across template / neutral-triad / literal-spelling paths,
 playback schedule timing (wall-clock vs relative seconds — the bug

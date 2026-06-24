@@ -189,5 +189,46 @@ test('regression: sustained notes (> 1 second) keep the glow on for the full dur
     `glow duration should be 2.0s for a 2-second note, got ${glowDuration}s`);
 });
 
+test('regression: same-pitch notes from different tracks each fire onNoteOff independently', () => {
+  // Regression: the previous code keyed the `currentlyActive` Set by
+  // cents only, so when two tracks played the same pitch simultaneously
+  // and the FIRST track's release fired, it deleted the shared key
+  // and the SECOND track's release was skipped — its onNoteOff never
+  // fired, leaving the graph glow stuck ON for the duration of the
+  // longer note even after the SELECTED track's note had ended.
+  //
+  // The fix: key currentlyActive by `${cents}|${track}` so each
+  // track+cent pair has its own independent lifecycle.
+  scheduledCallbacks.length = 0;
+  cancelledIds.length = 0;
+  const offCalls = [];
+  // Track 1 plays C4 briefly (480 ticks), Track 2 plays C4 longer
+  // (1920 ticks). Both at tpq=480, so 1 quarter per 480 ticks.
+  // At 120bpm: 1 second per quarter. Track 1 = 0.5s, Track 2 = 2s.
+  const events = [
+    { type: 'on',  timeTicks: 0,    note: 6000, vel: 80, track: 1 },
+    { type: 'off', timeTicks: 480,  note: 6000, vel: 0,  track: 1 },
+    { type: 'on',  timeTicks: 0,    note: 6000, vel: 80, track: 2 },
+    { type: 'off', timeTicks: 1920, note: 6000, vel: 0,  track: 2 },
+  ];
+  const pb = M.buildPlayback(events, 480, {
+    onNoteOff: (cents, ev) => offCalls.push({ cents, track: ev && ev.track }),
+  });
+  pb.play();
+  // Fire all 4 scheduled callbacks (2 attacks, 2 releases) in order.
+  // Tone.Draw is mocked to push in order; release 1 fires at 0.5s,
+  // release 2 fires at 2.0s.
+  for (const sc of scheduledCallbacks) sc.cb();
+  // Both releases should have fired onNoteOff. The previous bug skipped
+  // the second release because the first release deleted the shared
+  // cents key from currentlyActive.
+  assertEqual(offCalls.length, 2,
+    `expected 2 onNoteOff calls (one per track), got ${offCalls.length}`);
+  assertEqual(offCalls[0].cents, 6000, 'first off should be for cents 6000');
+  assertEqual(offCalls[0].track, 1, 'first off should be for track 1');
+  assertEqual(offCalls[1].cents, 6000, 'second off should be for cents 6000');
+  assertEqual(offCalls[1].track, 2, 'second off should be for track 2 (this was previously dropped)');
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail > 0) process.exit(1);

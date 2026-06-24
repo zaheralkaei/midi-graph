@@ -80,13 +80,24 @@
     let scheduledTimers = [];
     let playEndedTimer = null;
     let stopped = false;
-    // Tracks which cents are currently sounding (have had their onNoteOn
-    // callback fire but not yet their onNoteOff). Used by stop() to fire
-    // onNoteOff exactly once per active pitch, avoiding over-decrement.
+    // Tracks which cents + track pairs are currently sounding (have had
+    // their onNoteOn callback fire but not yet their onNoteOff). Used
+    // by stop() to fire onNoteOff exactly once per active pitch,
+    // avoiding over-decrement. Keyed by `${cents}|${track}` (not just
+    // cents) so two tracks playing the same pitch simultaneously each
+    // get their own independent onNoteOn / onNoteOff pair. Without
+    // this, the FIRST track to release its note would delete the
+    // shared key, and the SECOND track's release would skip its
+    // onNoteOff — leaving the graph glow stuck ON for the duration
+    // of the longer note even after the SELECTED track's note ended.
     let currentlyActive = new Set();
 
     function scheduleNote(n, startWallClock) {
       const cents = n.cents;
+      const track = n.event && n.event.track != null ? n.event.track : -1;
+      // Key includes track so simultaneous same-pitch notes from
+      // different tracks each have their own onNoteOn/onNoteOff pair.
+      const key = track < 0 ? cents : `${cents}|${track}`;
       const attackTime = startWallClock + n.startSec;
       const releaseTime = attackTime + n.durSec;
       const freq = 440 * Math.pow(2, (cents - 6900) / 1200);
@@ -95,7 +106,7 @@
       const attackId = Tone.Draw.schedule(() => {
         if (stopped) return;
         synth.triggerAttack(freq, attackTime);
-        currentlyActive.add(cents);
+        currentlyActive.add(key);
         onNoteOn(cents, n.event);
       }, attackTime);
 
@@ -103,8 +114,8 @@
       const releaseId = Tone.Draw.schedule(() => {
         if (stopped) return;
         synth.triggerRelease(freq, releaseTime);
-        if (currentlyActive.has(cents)) {
-          currentlyActive.delete(cents);
+        if (currentlyActive.has(key)) {
+          currentlyActive.delete(key);
           onNoteOff(cents, n.event);
         }
       }, releaseTime);
@@ -138,9 +149,13 @@
                          notes[notes.length - 1].durSec + 0.5;
         playEndedTimer = setTimeout(() => {
           // Make sure the last note's off callback fires if Draw missed it.
-          if (!stopped && currentlyActive.has(notes[notes.length - 1].cents)) {
-            currentlyActive.delete(notes[notes.length - 1].cents);
-            onNoteOff(notes[notes.length - 1].cents, notes[notes.length - 1].event);
+          // Look up by the track-aware key (matching scheduleNote's logic).
+          const lastNote = notes[notes.length - 1];
+          const lastTrack = lastNote.event && lastNote.event.track != null ? lastNote.event.track : -1;
+          const lastKey = lastTrack < 0 ? lastNote.cents : `${lastNote.cents}|${lastTrack}`;
+          if (!stopped && currentlyActive.has(lastKey)) {
+            currentlyActive.delete(lastKey);
+            onNoteOff(lastNote.cents, lastNote.event);
           }
           // Clear scheduled timer ids now that the play has fully completed.
           // Without this, a second call to play() would see scheduledTimers
@@ -172,11 +187,15 @@
       // note (including ones that already released normally) would decrement
       // the graph's activeCount past zero.
       //
-      // The stop() fallback doesn't have the original event object — only
-      // the cents. We pass null as the event so the caller can detect the
-      // stop-time fallback and skip track-aware filtering (treat the off
-      // as clearing any active state regardless of track).
-      for (const cents of currentlyActive) {
+      // The stop() fallback doesn't have the original event object — we
+      // only have the cents+track key. Extract the cents from the key
+      // (which is either a number for untracked events, or a
+      // "cents|track" string for tracked events). We pass null as the
+      // event so the caller can detect the stop-time fallback and skip
+      // track-aware filtering (treat the off as clearing any active
+      // state regardless of track).
+      for (const key of currentlyActive) {
+        const cents = typeof key === 'string' ? parseInt(key.split('|')[0], 10) : key;
         onNoteOff(cents, null);
       }
       currentlyActive.clear();

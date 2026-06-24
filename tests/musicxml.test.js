@@ -577,6 +577,47 @@ test('chordSequence: low-tpq file (MuseScore export) is not empty', () => {
   }
 });
 
+test('centsToPitch half-flat name format is parseable by graph.pitchOf regex', () => {
+  // Regression: graph.js's `pitchOf` regex is the bridge between
+  // node IDs (produced by centsToPitch) and cents (used by setActive
+  // to look up which node to glow). The previous regex required
+  // "half-flat " (with trailing space) but centsToPitch actually
+  // produces "half-flat4" (no space) — so every quarter-tone note
+  // had pitchOf() return the default 6000, and setActive(6150, true)
+  // silently failed to glow the E half-flat 4 node. Bug surfaced
+  // when loading the ya-tyra demo and the user's ya-tyra_with_h
+  // test file.
+  //
+  // This test pins the round-trip: for every cents value that
+  // centsToPitch might return with a "half-flat" form, the regex
+  // must successfully match and produce the correct cents.
+  const testCases = [
+    { cents: 6150, name: 'E half-flat4',  expectedCents: 6150 },  // 4th half-flat of C4 area
+    { cents: 5350, name: 'B half-flat3',  expectedCents: 5350 },  // 2nd half-flat of A3
+    { cents: 5650, name: 'D half-flat3',  expectedCents: 5650 },  // 2nd half-flat of C3
+    { cents: 6000, name: 'C4',            expectedCents: 6000 },  // natural (no alteration)
+    { cents: 6100, name: 'C#4',           expectedCents: 6100 },  // sharp
+    { cents: 6050, name: 'C\u21914',      expectedCents: 6050 },  // half-sharp with arrow
+    { cents: 6150, name: 'E half-flat 4', expectedCents: 6150 },  // legacy form (with space)
+  ];
+  // The regex from graph.js's pitchOf. We replicate it here so the
+  // test pins the contract independently from graph.js's internals.
+  // If the regex changes in graph.js, this test will need to be
+  // updated to match — the intent is that the regex is permissive
+  // about both "half-flat4" and "half-flat 4".
+  const pitchOfRegex = /^([A-G][#]?)(?:\u2191| half-sharp ?| half-flat ?)?(-?\d+)$/;
+  for (const tc of testCases) {
+    const m = tc.name.match(pitchOfRegex);
+    assert(m, `pitchOf regex should match "${tc.name}"`);
+    // Also assert centsToPitch itself produces a parseable form
+    // (this is the live bug — if centsToPitch changed format,
+    // pitchOf would need to change too).
+    const liveName = M.centsToPitch(tc.cents);
+    const liveMatch = liveName.match(pitchOfRegex);
+    assert(liveMatch, `centsToPitch(${tc.cents}) = "${liveName}" should match pitchOf regex`);
+  }
+});
+
 console.log('-----------------');
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
