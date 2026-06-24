@@ -12,6 +12,9 @@ const path = require('path');
 // ---- Mock Tone.js ----
 const scheduledCallbacks = [];
 const cancelledIds = [];
+// Pending setTimeout callbacks (we control when they fire, so the
+// playEndedTimer fallback in js/playback.js is directly testable).
+const pendingTimeouts = [];
 let nowFn = () => 0;
 
 global.Tone = {
@@ -28,6 +31,11 @@ global.Tone = {
   },
   Synth: function() {},
 };
+// Override setTimeout so we can fire the playEndedTimer fallback
+// synchronously in tests. The fallback is `setTimeout(fn, ms)` — we
+// push the callback into pendingTimeouts and let the test fire it.
+const realSetTimeout = setTimeout;
+global.setTimeout = (fn, ms) => { pendingTimeouts.push({ fn, ms }); };
 
 // playback.js expects window.MidiGraph to exist (it uses M.ticksToSecondsSegments).
 // It also expects `window` to be the global object. We make `global === window`
@@ -228,6 +236,69 @@ test('regression: same-pitch notes from different tracks each fire onNoteOff ind
   assertEqual(offCalls[0].track, 1, 'first off should be for track 1');
   assertEqual(offCalls[1].cents, 6000, 'second off should be for cents 6000');
   assertEqual(offCalls[1].track, 2, 'second off should be for track 2 (this was previously dropped)');
+});
+
+test('regression: playEndedTimer fallback fires onNoteOff for the SELECTED track, not just the last note by startSec', () => {
+  // Regression: when a piece has multiple tracks, the "last note by
+  // startSec" might be from a track the user is NOT viewing (e.g.
+  // the bass plays the very last note of the file). The previous
+  // code's playEndedTimer only handled `notes[notes.length - 1]`,
+  // and the app.js track filter rejected that note's onNoteOff
+  // (because event.track !== sel). The actual LAST NOTE of the
+  // SELECTED track would then be left with no fallback if its
+  // Tone.Draw release happened to be missed — leaving the graph
+  // glow stuck ON for the selected track's final note.
+  //
+  // The fix: iterate ALL notes that are still in currentlyActive
+  // at play-end and fire onNoteOff for each, looking up the original
+  // event from the `notes` array (so the track filter in app.js can
+  // correctly let the selected track through and reject others).
+  scheduledCallbacks.length = 0;
+  cancelledIds.length = 0;
+  pendingTimeouts.length = 0;
+  const offCalls = [];
+  // Track 0 (selected by app.js) ends its LAST NOTE at tick 480.
+  // Track 1 (not selected) ends its LAST NOTE at tick 960 — later.
+  // The "last note by startSec" is from track 1, not track 0.
+  const events = [
+    { type: 'on',  timeTicks: 240, note: 6000, vel: 80, track: 0 },
+    { type: 'off', timeTicks: 480, note: 6000, vel: 0,  track: 0 },
+    { type: 'on',  timeTicks: 480, note: 4000, vel: 80, track: 1 },
+    { type: 'off', timeTicks: 960, note: 4000, vel: 0,  track: 1 },
+  ];
+  const pb = M.buildPlayback(events, 480, {
+    onNoteOff: (cents, ev) => offCalls.push({ cents, track: ev && ev.track }),
+  });
+  pb.play();
+  // Simulate Tone.Draw MISSING all releases. We fire only the
+  // attack callbacks (so currentlyActive has both keys), but not
+  // the release callbacks (so the fallback has to handle them).
+  // scheduledCallbacks is appended in order: attack0, release0,
+  // attack1, release1, then setTimeout for playEndedTimer.
+  assertEqual(scheduledCallbacks.length, 4, 'expected 4 Draw callbacks');
+  scheduledCallbacks[0].cb();  // attack for track 0
+  scheduledCallbacks[2].cb();  // attack for track 1
+  // pendingTimeouts has the playEndedTimer fallback.
+  assertEqual(pendingTimeouts.length, 1, 'expected 1 pending setTimeout');
+  // Now fire the fallback. It should fire onNoteOff for BOTH active
+  // notes (track 0's cents 6000 and track 1's cents 4000). The app.js
+  // track filter would then let track 0 through and reject track 1,
+  // but the playback's job is to fire onNoteOff for every active note.
+  pendingTimeouts[0].fn();
+  assertEqual(offCalls.length, 2,
+    `fallback should fire onNoteOff for both active notes, got ${offCalls.length}`);
+  // The order is undefined (we iterate currentlyActive which is a Set
+  // in Node.js — order is insertion order). Check that BOTH tracks
+  // got an onNoteOff call.
+  const tracks = offCalls.map(c => c.track).sort();
+  assertEqual(tracks, [0, 1],
+    `expected onNoteOff for both tracks 0 and 1, got ${JSON.stringify(tracks)}`);
+  // Critically: track 0 (the SELECTED track) must be in the list.
+  // Before the fix, only the last note by startSec (track 1) would
+  // get an onNoteOff — and the track filter in app.js would reject
+  // it. Track 0's note would be left with no onNoteOff at all.
+  assert(offCalls.some(c => c.track === 0 && c.cents === 6000),
+    'fallback must fire onNoteOff for the selected track (track 0, cents 6000)');
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

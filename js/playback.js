@@ -148,14 +148,51 @@
         const totalSec = notes[notes.length - 1].startSec +
                          notes[notes.length - 1].durSec + 0.5;
         playEndedTimer = setTimeout(() => {
-          // Make sure the last note's off callback fires if Draw missed it.
-          // Look up by the track-aware key (matching scheduleNote's logic).
-          const lastNote = notes[notes.length - 1];
-          const lastTrack = lastNote.event && lastNote.event.track != null ? lastNote.event.track : -1;
-          const lastKey = lastTrack < 0 ? lastNote.cents : `${lastNote.cents}|${lastTrack}`;
-          if (!stopped && currentlyActive.has(lastKey)) {
-            currentlyActive.delete(lastKey);
-            onNoteOff(lastNote.cents, lastNote.event);
+          // For every note that is still in currentlyActive at play-end,
+          // fire its onNoteOff. This catches:
+          //   (1) The very last note (whose release Tone.Draw might have
+          //       dropped or scheduled past the audio context's horizon).
+          //   (2) Any intermediate note whose release was missed for the
+          //       same reason.
+          //   (3) The cross-track case: the last note by startSec might
+          //       be from a DIFFERENT track than the user's selected
+          //       track. The onNoteOn/onNoteOff callbacks in app.js
+          //       filter by `event.track === sel`, so the natural
+          //       Tone.Draw releases for other tracks are correctly
+          //       rejected. But that filtering also rejects the
+          //       playEndedTimer's fallback if it only handles the
+          //       last note — and if the SELECTED track's last note
+          //       happens to be earlier in the file, its release is
+          //       the one most at risk of being missed.
+          // Iterating the currentlyActive Set (which is keyed by
+          // cents+track) and looking up the matching note in the
+          // `notes` array ensures we get the original event for each
+          // active note — the filter in app.js then correctly lets
+          // the selected track's off callback through and rejects
+          // the others.
+          for (const key of currentlyActive) {
+            // Look up the original note in the notes array by key.
+            // The key is either a number (untracked event) or a
+            // "cents|track" string. We need to find the note whose
+            // event matches this key so we can pass the original
+            // event to onNoteOff (required for the track filter
+            // in app.js).
+            let matchedNote = null;
+            for (const n of notes) {
+              const nTrack = n.event && n.event.track != null ? n.event.track : -1;
+              const nKey = nTrack < 0 ? n.cents : `${n.cents}|${nTrack}`;
+              if (nKey === key) { matchedNote = n; break; }
+            }
+            if (matchedNote) {
+              currentlyActive.delete(key);
+              onNoteOff(matchedNote.cents, matchedNote.event);
+            } else {
+              // Key not found in notes (shouldn't happen, but be safe).
+              // Fall back to parsing the key to extract cents.
+              const cents = typeof key === 'string' ? parseInt(key.split('|')[0], 10) : key;
+              currentlyActive.delete(key);
+              onNoteOff(cents, null);
+            }
           }
           // Clear scheduled timer ids now that the play has fully completed.
           // Without this, a second call to play() would see scheduledTimers
