@@ -54,8 +54,16 @@
           const head = stack.shift();
           const startSec = tickToSec(head.tickOn);
           const endSec = tickToSec(ev.timeTicks);
-          let durSec = Math.max(0.05, endSec - startSec);
-          if (!isFinite(durSec) || durSec > 1.0) durSec = 1.0;
+          // The 0.05 lower bound ensures the synth has a non-zero
+          // release time for very short notes (e.g. 16th notes at fast
+          // tempos that round to < 50ms). The previous version also
+          // capped durSec at 1.0s as a "safety net" but this caused
+          // the graph glow to turn off mid-note for sustained sounds
+          // (whole notes, pedal piano, organ chords, etc.) where the
+          // OFF event is several seconds after the ON. The cap was
+          // removed in favor of the isFinite check + lower bound only.
+          let durSec = endSec - startSec;
+          if (!isFinite(durSec) || durSec < 0.05) durSec = 0.05;
           notes.push({ startSec, durSec, cents: ev.note, event: head.event });
         }
         if (stack && stack.length === 0) pending.delete(ev.note);

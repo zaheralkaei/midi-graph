@@ -160,5 +160,34 @@ test('regression: scheduleNote uses Tone.now() + 0.1 base, not relative seconds'
   assert(attackTime > 0, `attack time should be in the future, got ${attackTime}`);
 });
 
+test('regression: sustained notes (> 1 second) keep the glow on for the full duration', () => {
+  // Regression: the previous code capped durSec at 1.0s as a "safety
+  // net" against runaway durations, but this caused the graph glow
+  // to turn off mid-note for sustained sounds (whole notes, pedal
+  // piano, organ chords, slow melodic pieces) where the OFF event
+  // is several seconds after the ON. The cap was removed; durSec
+  // now reflects the actual time between ON and OFF.
+  scheduledCallbacks.length = 0;
+  // 2-second note at 60bpm: on at tick 0, off at tick 1920 (1920
+  // ticks at 960 tpq = 2 quarters = 2 seconds at 60bpm).
+  const events = [
+    { type: 'on',  timeTicks: 0,    note: 6000, vel: 80, track: 1, tempoBPM: 60 },
+    { type: 'off', timeTicks: 1920, note: 6000, vel: 0,  track: 1, tempoBPM: 60 },
+  ];
+  const pb = M.buildPlayback(events, 960, {});
+  pb.play();
+  // Find the attack (on) and release (off) for this note.
+  // scheduledCallbacks is appended in the order: attack0, release0, attack1, release1, ...
+  assert(scheduledCallbacks.length === 2, `expected 2 callbacks (attack + release), got ${scheduledCallbacks.length}`);
+  const attack = scheduledCallbacks[0];
+  const release = scheduledCallbacks[1];
+  const attackTime = attack.time;
+  const releaseTime = release.time;
+  const glowDuration = releaseTime - attackTime;
+  // Should be 2.0s, not capped to 1.0s.
+  assert(Math.abs(glowDuration - 2.0) < 0.01,
+    `glow duration should be 2.0s for a 2-second note, got ${glowDuration}s`);
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail > 0) process.exit(1);
