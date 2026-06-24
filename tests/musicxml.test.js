@@ -364,6 +364,84 @@ test('buildSyntheticMusicXml: real demo MIDI produces parseable output', () => {
   assert(inCents.has(8600), 'D6 (8600¢) should appear');
 });
 
+// ---------------------------------------------------------------------------
+// Regression: currentTickForPart must skip <chord/> notes when summing
+// measure durations. Without this, a measure with 3 simultaneous chord
+// notes advances the cursor by 3*duration instead of 1*duration, putting
+// every subsequent measure 2 measures too late. Discovered via the
+// examples/simple_harmony.musicxml audit (a 32-window I-IV-V-I-vi-ii-V7-I
+// progression was producing events at 3-measure intervals instead of
+// 1-measure).
+// ---------------------------------------------------------------------------
+test('parseMusicXml: <chord/> notes do not advance the per-part cursor', () => {
+  // 3 measures, each with a 3-note sustained chord. With the bug, the
+  // second chord would land at tick 5760 (3*1920) instead of 1920.
+  const xmlText = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>480</divisions></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+      <note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+      <note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+    </measure>
+    <measure number="2">
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+      <note><chord/><pitch><step>A</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+      <note><chord/><pitch><step>C</step><octave>5</octave></pitch><duration>1920</duration><type>whole</type></note>
+    </measure>
+    <measure number="3">
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+      <note><chord/><pitch><step>B</step><octave>4</octave></pitch><duration>1920</duration><type>whole</type></note>
+      <note><chord/><pitch><step>D</step><octave>5</octave></pitch><duration>1920</duration><type>whole</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+  const r = xml.parseMusicXml(xmlText);
+  // Group <on> events by their measure (computed from start tick).
+  // Measure 1: 0-1919, m2: 1920-3839, m3: 3840-5759.
+  const measureOf = (t) => Math.floor(t / 1920) + 1;
+  const ons = r.events.filter(e => e.type === 'on');
+  const m1Ons = ons.filter(e => measureOf(e.timeTicks) === 1);
+  const m2Ons = ons.filter(e => measureOf(e.timeTicks) === 2);
+  const m3Ons = ons.filter(e => measureOf(e.timeTicks) === 3);
+  assertEqual(m1Ons.length, 3, 'measure 1 should have 3 <on> events (C, E, G)');
+  assertEqual(m2Ons.length, 3, 'measure 2 should have 3 <on> events (F, A, C5)');
+  assertEqual(m3Ons.length, 3, 'measure 3 should have 3 <on> events (G, B, D5)');
+  // The m2 chord should start at exactly 1920, not 5760.
+  assertEqual(m2Ons[0].timeTicks, 1920, 'm2 chord should start at tick 1920');
+  assertEqual(m3Ons[0].timeTicks, 3840, 'm3 chord should start at tick 3840');
+});
+
+// ---------------------------------------------------------------------------
+// End-to-end chord detection on examples/simple_harmony.musicxml.
+// The file contains an 8-measure progression (I-IV-V-I-vi-ii-V7-I in C)
+// and chordSequence should classify each measure correctly.
+// ---------------------------------------------------------------------------
+test('analyzeMusicXml + chordSequence: I-IV-V-I-vi-ii-V7-I in C major', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const xmlPath = path.join(__dirname, '..', 'examples', 'simple_harmony.musicxml');
+  // Skip if the example file isn't present (e.g. fresh checkout without
+  // scripts/build-simple-harmony.js having been run).
+  if (!fs.existsSync(xmlPath)) {
+    console.log('  skip  (examples/simple_harmony.musicxml not present)');
+    return;
+  }
+  const xmlText = fs.readFileSync(xmlPath, 'utf-8');
+  const r = xml.analyzeMusicXml(xmlText);
+  const windows = M.chordSequence(r.events, { ticksPerQuarter: r.ticksPerQuarter });
+  // 8 measures × 4 quarters = 32 windows. Each measure's 4 windows
+  // should carry the same chord label.
+  const expected = ['C', 'F', 'G', 'C', 'Am', 'Dm', 'G7', 'C'];
+  for (let m = 0; m < 8; m++) {
+    const winLabels = windows.slice(m * 4, m * 4 + 4).map(w => w.label);
+    const allMatch = winLabels.every(l => l === expected[m]);
+    assert(allMatch, `measure ${m + 1}: expected all windows "${expected[m]}", got ${JSON.stringify(winLabels)}`);
+  }
+});
+
 console.log('-----------------');
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

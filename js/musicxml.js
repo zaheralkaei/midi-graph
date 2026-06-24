@@ -310,9 +310,16 @@
       }
       if (m === targetMeasureEl) return tick;
       // Advance tick by the sum of all note durations + forwards - backups.
+      // <chord/> notes are simultaneous with the previous note and don't
+      // advance the cursor — same rule the main loop uses (see line ~222).
+      // Without this, currentTickForPart over-counts: a measure with 3
+      // simultaneous chord notes advances the cursor by 3 * durTicks
+      // instead of 1 * durTicks, putting every subsequent measure 2
+      // measures too late.
       let measureLen = 0;
       for (const n of Array.from(m.getElementsByTagName('note'))) {
         const dur = childFloat(n, 'duration', 0);
+        if (hasChild(n, 'chord')) continue;   // simultaneous — skip
         if (hasChild(n, 'backup')) measureLen -= dur;
         else if (hasChild(n, 'forward')) measureLen += dur;
         else measureLen += dur;
