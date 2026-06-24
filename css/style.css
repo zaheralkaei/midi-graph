@@ -16,7 +16,7 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   min-height: 100vh;
 }
-.wrap { max-width: 1280px; margin: 0 auto; padding: 20px; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 20px; position: relative; }
 h1 {
   margin: 0 0 4px 0;
   font-size: 22px;
@@ -32,11 +32,13 @@ h1.title-centered {
   justify-content: center;
   text-align: center;
 }
-h1 .title-tag {
+.title-tag-centered {
+  text-align: center;
   font-size: 13px;
   font-weight: 400;
   color: var(--muted);
   letter-spacing: 0.2px;
+  margin: -6px 0 10px;
 }
 .source-label {
   font-size: 12px;
@@ -437,15 +439,16 @@ circle.active {
    "more info" affordance; aria-label gives it a proper accessible name
    for screen readers since the visible character is decorative. */
 .info-btn {
+  position: absolute;
+  top: 18px;
+  right: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 26px;
   height: 26px;
-  margin-left: 8px;
   /* Slightly down from the text baseline so it visually aligns with the
      lowercase x-height of "midi-graph" rather than the cap height. */
-  vertical-align: 2px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 50%;
