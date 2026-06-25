@@ -301,5 +301,62 @@ test('regression: playEndedTimer fallback fires onNoteOff for the SELECTED track
     'fallback must fire onNoteOff for the selected track (track 0, cents 6000)');
 });
 
+test('regression: polyphonic steal force-releases a previous note when its Tone.Draw release was missed', () => {
+  // Regression: in long pieces (e.g. the user's ya-tyra_with_h
+  // 79-second file), Tone.Draw's internal queue can drop late
+  // release callbacks. The activeCount in the graph then never
+  // decrements, and the glow stays ON for the rest of the
+  // playback.
+  //
+  // The fix: when an attack fires for a key that's still in
+  // currentlyActive, the previous note's release was almost
+  // certainly missed. Force the previous note's off callback
+  // NOW (before the new attack increments the count), so the
+  // activeCount returns to 0 before the new note starts.
+  scheduledCallbacks.length = 0;
+  cancelledIds.length = 0;
+  pendingTimeouts.length = 0;
+  const onCalls = [];
+  const offCalls = [];
+  // Two consecutive C4 notes on track 0, re-articulated.
+  // Note A: 0-480 ticks (0.5s). Note B: 480-960 ticks (0.5s).
+  // We skip Note A's release to simulate Tone.Draw dropping it.
+  const events = [
+    { type: 'on',  timeTicks: 0,   note: 6000, vel: 80, track: 0 },
+    { type: 'off', timeTicks: 480, note: 6000, vel: 0,  track: 0 },
+    { type: 'on',  timeTicks: 480, note: 6000, vel: 80, track: 0 },
+    { type: 'off', timeTicks: 960, note: 6000, vel: 0,  track: 0 },
+  ];
+  const pb = M.buildPlayback(events, 480, {
+    onNoteOn: (cents, ev) => onCalls.push({ cents, track: ev && ev.track }),
+    onNoteOff: (cents, ev) => offCalls.push({ cents, track: ev && ev.track }),
+  });
+  pb.play();
+  // scheduledCallbacks: attack0, release0, attack1, release1
+  assertEqual(scheduledCallbacks.length, 4, 'expected 4 Draw callbacks');
+  // Fire attack0 (Note A starts). currentlyActive gets '6000|0'.
+  scheduledCallbacks[0].cb();
+  assertEqual(onCalls.length, 1, 'note A on should have fired');
+  // Skip release0 (simulate Tone.Draw dropping it).
+  // Fire attack1 (Note B starts). The polyphonic steal should
+  // detect that '6000|0' is still active and force-release Note A.
+  scheduledCallbacks[2].cb();
+  // After Note B's attack: the steal fires onNoteOff for Note A
+  // BEFORE the new onNoteOn. So offCalls has 1 entry, onCalls has 2.
+  assertEqual(offCalls.length, 1,
+    `polyphonic steal should fire 1 off call (for stale Note A), got ${offCalls.length}`);
+  assertEqual(offCalls[0].track, 0, 'steal off should be for track 0');
+  assertEqual(onCalls.length, 2, 'both on calls should have fired');
+  // The track filter in app.js would let track 0's off through
+  // and decrement activeCount. Then the new attack increments.
+  // Net effect: count goes 0 → 1 (Note A) → 0 (steal) → 1 (Note B).
+  // The glow is ON for Note A's duration, OFF briefly during the
+  // steal (in the same JS frame), then ON for Note B's duration.
+  // Then Note B's release fires normally:
+  scheduledCallbacks[3].cb();
+  assertEqual(offCalls.length, 2,
+    `Note B release should fire normally, got ${offCalls.length} off calls`);
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail > 0) process.exit(1);

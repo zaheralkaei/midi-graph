@@ -91,6 +91,13 @@
     // onNoteOff — leaving the graph glow stuck ON for the duration
     // of the longer note even after the SELECTED track's note ended.
     let currentlyActive = new Set();
+    // Maps each active key to its most recent note object. When a
+    // new note for the same key is scheduled, this lets the
+    // scheduleNote function force-release the previous note (whose
+    // Tone.Draw release may have been missed in long pieces) so the
+    // graph glow doesn't get stuck ON. Cleared on stop() and on
+    // each fresh play() call.
+    let lastNoteByKey = new Map();
 
     function scheduleNote(n, startWallClock) {
       const cents = n.cents;
@@ -105,6 +112,25 @@
       // Schedule the attack (the tone starts).
       const attackId = Tone.Draw.schedule(() => {
         if (stopped) return;
+        // Polyphonic steal at attack time: if a previous note for
+        // the same key is still in currentlyActive, the previous
+        // note's release was almost certainly missed (Tone.Draw
+        // drops late callbacks in long pieces — a real-world
+        // failure mode for the user's ya-tyra_with_h 79-second
+        // file). Force the previous note's off callback NOW so
+        // the graph glow doesn't get stuck ON. We do this BEFORE
+        // incrementing the new note's activeCount, so the count
+        // stays correct: 0 → 0 (steal) → +1 (this note) = 1.
+        //
+        // The track filter in app.js will then correctly let
+        // the selected track's off callback through (or reject
+        // other tracks' if they're not selected).
+        if (currentlyActive.has(key) && lastNoteByKey.has(key)) {
+          const prev = lastNoteByKey.get(key);
+          currentlyActive.delete(key);
+          onNoteOff(prev.cents, prev.event);
+        }
+        lastNoteByKey.set(key, n);
         synth.triggerAttack(freq, attackTime);
         currentlyActive.add(key);
         onNoteOn(cents, n.event);
@@ -116,6 +142,12 @@
         synth.triggerRelease(freq, releaseTime);
         if (currentlyActive.has(key)) {
           currentlyActive.delete(key);
+          // Only clear lastNoteByKey if it's still pointing at
+          // this note — a polyphonic steal (or a re-articulation)
+          // may have already replaced it with a newer note.
+          if (lastNoteByKey.get(key) === n) {
+            lastNoteByKey.delete(key);
+          }
           onNoteOff(cents, n.event);
         }
       }, releaseTime);
@@ -130,6 +162,14 @@
         // line `if (... || stopped)`. The reset has to happen before the
         // bail check so a Stop→Play sequence works.
         stopped = false;
+        // Clear currentlyActive and lastNoteByKey from any previous
+        // play/stop. Without this, a replay after stop() would carry
+        // stale entries that could cause the polyphonic-steal logic
+        // to fire a phantom onNoteOff at the start of the new
+        // playback. We don't clear scheduledTimers because the bail
+        // check below uses its length to detect an in-flight play().
+        currentlyActive.clear();
+        lastNoteByKey.clear();
         if (!notes.length || scheduledTimers.length > 0) {
           // Bail cases:
           //   - no notes in this playback instance (shouldn't happen)
@@ -236,6 +276,7 @@
         onNoteOff(cents, null);
       }
       currentlyActive.clear();
+      lastNoteByKey.clear();
     }
 
     return { play, stop, noteCount: notes.length, tickToSec };
